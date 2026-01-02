@@ -4,7 +4,6 @@ import os
 import json
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-import json
 
 class ChatbotRAG:
     def __init__(self, config_path: str = "config.json"):
@@ -128,17 +127,10 @@ class ChatbotRAG:
         if use_rag:
             if pdf_name:
                 context = self.rag.get_context_by_pdf(user_message, pdf_name, k=k)
-                print(f"\n📚 Contexto recuperado desde PDF '{pdf_name}'")
-                print(f"   Largo: {len(context)} caracteres")
-                print(f"   Primeros 200 chars: {context[:200]}...")
             else:
                 context = self.rag.get_context(user_message, k=k)
-                print(f"\n📚 Contexto recuperado (global)")
-                print(f"   Largo: {len(context)} caracteres")
 
-        # Verificar si hay contexto válido
-        print(f"✓ context no vacío: {bool(context)}")
-        print(f"✓ 'No hay información' en context: {'No hay información' in context}")
+
 
         # Truncar contexto si excede la capacidad del modelo (aproximación por caracteres)
         if context and "No hay información" not in context:
@@ -148,16 +140,13 @@ class ChatbotRAG:
                 # Mantener la parte más relevante (la última parte suele contener respuestas/fragmentos útiles)
                 context = context[-max_chars:]
                 context = "[...contexto recortado...]\n" + context
-                print(f"⚠️ Contexto recortado a {max_chars} caracteres para ajustarse al modelo")
+
 
         # Preparar mensajes para el modelo
         messages_to_send = self.messages.copy()
 
         # Agregar el contexto del RAG como parte del mensaje si está disponible
-        print(f"✓ Antes de agregar context: {len(messages_to_send)} mensajes, context={bool(context) and 'No hay información' not in context}")
-        
         if context and "No hay información" not in context:
-            print(f"✓ AGREGANDO CONTEXTO AL SYSTEM MESSAGE")
             system_message = f"""Eres un asistente experto que trabaja ÚNICAMENTE con el contenido del documento proporcionado.
 
 DOCUMENTO A ANALIZAR:
@@ -175,9 +164,6 @@ Responde en español, de forma clara y directa."""
             # Agregar contexto como mensaje de sistema
             if not any(msg.get("role") == "system" for msg in messages_to_send):
                 messages_to_send.insert(0, {"role": "system", "content": system_message})
-                print(f"✓ System message insertado ({len(system_message)} chars)")
-        else:
-            print(f"✗ NO SE AGREGÓ CONTEXTO (context vacío o contiene 'No hay información')")
 
         # Agregar mensaje del usuario
         user_content = f"PREGUNTA: {user_message}"

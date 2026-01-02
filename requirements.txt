@@ -1,7 +1,5 @@
 openai
 pymupdf
-langchain
-langchain-community
 chromadb
 sentence-transformers
 numpy
