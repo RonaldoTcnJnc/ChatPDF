@@ -95,6 +95,12 @@ class ChatbotRAG:
         
         try:
             self.client = OpenAI(base_url=self.base_url, api_key=api_key)
+            # Intentar listar modelos para verificar conexión real
+            try:
+                self.client.models.list()
+            except Exception as e:
+                raise ConnectionError(f"No se pudo conectar a LMStudio: {e}")
+            
             print(f"✅ Conexión con LMStudio establecida")
             print(f"🧠 Modelo: {self.model_name}")
         except Exception as e:
@@ -232,6 +238,9 @@ Responde en español, de forma clara y directa."""
             return response.text
             
         except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower():
+                return "⚠️ Error: Se ha excedido la cuota gratuita de Gemini API. Por favor, espera unos minutos o cambia al modelo Local."
             return f"❌ Error al obtener respuesta de Gemini: {e}"
     
     def _get_local_response(self, user_message: str, system_message: Optional[str]) -> str:
