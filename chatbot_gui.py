@@ -69,13 +69,30 @@ class ChatbotGUI:
         # PDF selector dropdown
         self.pdf_dropdown = ft.Dropdown(
             label="📄 Selecciona un PDF",
-            width=300,
+            width=250,
             filled=True,
             bgcolor="#1E1E1E",
             border_color=primary_color,
             label_style=ft.TextStyle(color="#B0BEC5"),
             text_style=ft.TextStyle(color="white"),
             on_change=self.on_pdf_selected
+        )
+
+        # Provider selector dropdown
+        self.provider_dropdown = ft.Dropdown(
+            label="🤖 Proveedor",
+            width=150,
+            value=self.chatbot.provider,
+            options=[
+                ft.dropdown.Option("gemini", "☁️ Gemini"),
+                ft.dropdown.Option("local", "💻 Local")
+            ],
+            filled=True,
+            bgcolor="#1E1E1E",
+            border_color="#4CAF50",
+            label_style=ft.TextStyle(color="#B0BEC5"),
+            text_style=ft.TextStyle(color="white"),
+            on_change=self.on_provider_changed
         )
 
         # Input area
@@ -100,7 +117,7 @@ class ChatbotGUI:
         )
 
         input_row = ft.Row(
-            [self.pdf_dropdown, self.input_field, send_btn],
+            [self.provider_dropdown, self.pdf_dropdown, self.input_field, send_btn],
             spacing=10,
             expand=True
         )
@@ -268,6 +285,27 @@ class ChatbotGUI:
                 is_user=False
             )
 
+    def on_provider_changed(self, e):
+        """Se ejecuta cuando el usuario cambia el proveedor de LLM"""
+        if self.provider_dropdown.value:
+            new_provider = self.provider_dropdown.value
+            try:
+                success = self.chatbot.set_provider(new_provider)
+                if success:
+                    provider_name = "☁️ Gemini" if new_provider == "gemini" else "💻 Local (LMStudio)"
+                    self.add_message_to_display(
+                        "🔄 Proveedor Cambiado",
+                        f"Ahora usando: {provider_name}",
+                        is_user=False
+                    )
+                    self.update_stats()
+            except Exception as ex:
+                self.add_message_to_display(
+                    "❌ Error",
+                    f"No se pudo cambiar a {new_provider}: {str(ex)}",
+                    is_user=False
+                )
+
     def refresh_pdf_list(self):
         """Actualiza la lista de PDFs disponibles en el dropdown"""
         try:
@@ -338,7 +376,8 @@ class ChatbotGUI:
         try:
             stats = self.chatbot.rag.get_stats()
             pdf_count = stats.get('total_pdfs', 0)
-            self.stats_text.value = f"📚 PDFs: {pdf_count} | Chunks: {stats['total_chunks']} | 🧠 Modelo: {stats['embedding_model']}"
+            provider = self.chatbot.provider.capitalize()
+            self.stats_text.value = f"🤖 {provider} | 📚 PDFs: {pdf_count} | Chunks: {stats['total_chunks']}"
             self.refresh_pdf_list()
         except:
             self.stats_text.value = " Estado: Listo"

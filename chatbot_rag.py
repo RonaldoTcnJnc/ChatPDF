@@ -4,43 +4,35 @@ import os
 import json
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
 
 class ChatbotRAG:
     def __init__(self, config_path: str = "config.json"):
         """
         Inicializa el chatbot con RAG.
-        Carga la configuración desde config.json por defecto.
+        Soporta múltiples proveedores: 'gemini' o 'local' (LMStudio).
         """
         self.config = self._load_config(config_path)
         
-        # Configuración de LMStudio
-        self.base_url = self.config["lmstudio"]["base_url"]
-        self.model_name = self.config["lmstudio"]["model_name"]
-        self.api_key = self.config["lmstudio"]["api_key"]
+        # Determinar proveedor
+        self.provider = self.config.get("provider", "local")
+        self.client = None
+        self.gemini_model = None
         
         # Configuración RAG
         self.rag_db_path = self.config["rag"]["db_path"]
-        self.model_context_size = self.config["lmstudio"].get("model_context_size", 8192) # Default
+        self.model_context_size = self.config.get("lmstudio", {}).get("model_context_size", 8192)
         
-        # Reservar tokens para la respuesta y mensajes del sistema (reducido para más contexto)
+        # Reservar tokens para la respuesta
         self.reserved_tokens = 256
-        # Aproximación: caracteres por token (heurística)
         self.chars_per_token = 4
         
-        print(f"🔌 Conectando a LMStudio en: {self.base_url}")
-        print(f"🧠 Modelo: {self.model_name}")
+        # Inicializar proveedor
+        self._init_provider()
         
-        try:
-            self.client = OpenAI(base_url=self.base_url, api_key=self.api_key)
-            # Verificación rápida de conexión (opcional, puede ralentizar inicio)
-            # self.client.models.list()
-            print("✅ Conexión con LMStudio establecida.")
-        except Exception as e:
-            print(f"⚠️  No se pudo conectar a LMStudio: {e}")
-            print("   Asegúrate de que LMStudio esté corriendo y el servidor local activado.")
-            # Opcional: raise la excepción o salir si la conexión es crítica
-            raise
-
         # Inicializar sistema RAG
         self.rag = RAGSystem(
             db_path=self.rag_db_path,
@@ -50,9 +42,80 @@ class ChatbotRAG:
         # Historial de mensajes
         self.messages = []
         
-        print("🔵 Chatbot RAG inicializado")
-        print(f"🤖 Modelo: {self.model_name}")
+        print(f"🔵 Chatbot RAG inicializado")
+        print(f"🤖 Proveedor: {self.provider}")
         print(f"📚 Base de datos RAG: {self.rag_db_path}")
+    
+    def _init_provider(self):
+        """Inicializa el proveedor de LLM según la configuración."""
+        if self.provider == "gemini":
+            self._init_gemini()
+        else:
+            self._init_local()
+    
+    def _init_gemini(self):
+        """Inicializa la conexión con Gemini API."""
+        try:
+            import google.generativeai as genai
+            
+            # Obtener API key (prioridad: env > config)
+            api_key = os.getenv("GEMINI_API_KEY") or self.config.get("gemini", {}).get("api_key", "")
+            
+            if not api_key:
+                print("⚠️  No se encontró GEMINI_API_KEY. Configúrala en .env o config.json")
+                raise ValueError("API key de Gemini no configurada")
+            
+            genai.configure(api_key=api_key)
+            
+            model_name = self.config.get("gemini", {}).get("model_name", "gemini-2.0-flash")
+            self.gemini_model = genai.GenerativeModel(model_name)
+            self.model_name = model_name
+            
+            print(f"✅ Conectado a Gemini API")
+            print(f"🧠 Modelo: {model_name}")
+            
+        except ImportError:
+            print("❌ google-generativeai no instalado. Ejecuta: pip install google-generativeai")
+            raise
+        except Exception as e:
+            print(f"❌ Error al conectar con Gemini: {e}")
+            # Intentar fallback a local
+            print("⚠️  Intentando fallback a modelo local...")
+            self.provider = "local"
+            self._init_local()
+    
+    def _init_local(self):
+        """Inicializa la conexión con LMStudio (local)."""
+        lmstudio_config = self.config.get("lmstudio", {})
+        self.base_url = lmstudio_config.get("base_url", "http://localhost:1234/v1")
+        self.model_name = lmstudio_config.get("model_name", "local-model")
+        api_key = lmstudio_config.get("api_key", "not-needed")
+        
+        print(f"🔌 Conectando a LMStudio en: {self.base_url}")
+        
+        try:
+            self.client = OpenAI(base_url=self.base_url, api_key=api_key)
+            print(f"✅ Conexión con LMStudio establecida")
+            print(f"🧠 Modelo: {self.model_name}")
+        except Exception as e:
+            print(f"⚠️  No se pudo conectar a LMStudio: {e}")
+            # Intentar fallback a Gemini si hay API key
+            if os.getenv("GEMINI_API_KEY") or self.config.get("gemini", {}).get("api_key"):
+                print("⚠️  Intentando fallback a Gemini...")
+                self.provider = "gemini"
+                self._init_gemini()
+            else:
+                raise
+    
+    def set_provider(self, provider: str):
+        """Cambia el proveedor de LLM en tiempo de ejecución."""
+        if provider not in ["gemini", "local"]:
+            print(f"❌ Proveedor inválido: {provider}. Usa 'gemini' o 'local'")
+            return False
+        
+        self.provider = provider
+        self._init_provider()
+        return True
     
     def _load_config(self, config_path: str) -> Dict[str, Any]:
         """Carga la configuración desde un archivo JSON."""
@@ -62,9 +125,14 @@ class ChatbotRAG:
         except FileNotFoundError:
             print(f"⚠️  No se encontró {config_path}. Usando valores por defecto.")
             return {
+                "provider": "local",
+                "gemini": {
+                    "api_key": "",
+                    "model_name": "gemini-2.0-flash"
+                },
                 "lmstudio": {
                     "base_url": "http://localhost:1234/v1",
-                    "model_name": "lmstudio-community/Meta-Llama-3-8B-Instruct",
+                    "model_name": "local-model",
                     "api_key": "not-needed"
                 },
                 "rag": {
@@ -77,12 +145,7 @@ class ChatbotRAG:
             raise
 
     def load_pdfs(self, folder_path: str):
-        """
-        Carga PDFs desde una carpeta.
-        
-        Args:
-            folder_path: Ruta a la carpeta con PDFs
-        """
+        """Carga PDFs desde una carpeta."""
         print(f"\n📂 Cargando PDFs desde: {folder_path}")
         if not os.path.exists(folder_path):
             print(f"❌ Carpeta no encontrada: {folder_path}")
@@ -97,12 +160,7 @@ class ChatbotRAG:
         return True
     
     def load_single_pdf(self, pdf_path):
-        """
-        Carga un solo PDF.
-        
-        Args:
-            pdf_path: Ruta al archivo PDF
-        """
+        """Carga un solo PDF."""
         if not os.path.exists(pdf_path):
             print(f"❌ Archivo no encontrado: {pdf_path}")
             return False
@@ -113,14 +171,7 @@ class ChatbotRAG:
     def get_response(self, user_message, use_rag=True, k=3, pdf_name=None):
         """
         Obtiene una respuesta del modelo con o sin RAG.
-        
-        Args:
-            user_message: Mensaje del usuario
-            use_rag: Si se debe usar RAG para recuperar contexto
-            k: Número de documentos relevantes a recuperar
-            
-        Returns:
-            Respuesta del modelo
+        Usa el proveedor configurado (Gemini o local).
         """
         # Obtener contexto del RAG si está activado
         context = ""
@@ -130,22 +181,16 @@ class ChatbotRAG:
             else:
                 context = self.rag.get_context(user_message, k=k)
 
-
-
-        # Truncar contexto si excede la capacidad del modelo (aproximación por caracteres)
+        # Truncar contexto si excede la capacidad del modelo
         if context and "No hay información" not in context:
             max_tokens_for_context = max(0, self.model_context_size - self.reserved_tokens)
             max_chars = max_tokens_for_context * self.chars_per_token
             if len(context) > max_chars:
-                # Mantener la parte más relevante (la última parte suele contener respuestas/fragmentos útiles)
                 context = context[-max_chars:]
                 context = "[...contexto recortado...]\n" + context
 
-
-        # Preparar mensajes para el modelo
-        messages_to_send = self.messages.copy()
-
-        # Agregar el contexto del RAG como parte del mensaje si está disponible
+        # Construir el prompt del sistema
+        system_message = None
         if context and "No hay información" not in context:
             system_message = f"""Eres un asistente experto que trabaja ÚNICAMENTE con el contenido del documento proporcionado.
 
@@ -161,37 +206,55 @@ INSTRUCCIONES CRUCIALES:
 
 Responde en español, de forma clara y directa."""
 
-            # Agregar contexto como mensaje de sistema
-            if not any(msg.get("role") == "system" for msg in messages_to_send):
-                messages_to_send.insert(0, {"role": "system", "content": system_message})
-
-        # Agregar mensaje del usuario
-        user_content = f"PREGUNTA: {user_message}"
-        messages_to_send.append({"role": "user", "content": user_content})
-
-        # --- Gestión del tamaño total del prompt para evitar overflow de tokens ---
-        # Estimación simple de tokens basada en caracteres
-        def estimate_tokens(text: str) -> int:
-            if not text:
-                return 0
-            return max(1, int(len(text) / self.chars_per_token))
-
-        # Si el historial es muy largo (más de 2 turnos), recortar solo ese historial, NO el system message
-        if len([m for m in messages_to_send if m.get("role") != "system"]) > 8:
-            new_messages = []
-            # Mantener todos los system messages
-            for m in messages_to_send:
-                if m.get("role") == "system":
-                    new_messages.append(m)
-            # Mantener solo los últimos 4 turnos de historial (user/assistant pairs)
-            tail = [m for m in messages_to_send if m.get("role") != "system"]
-            tail = tail[-8:]
-            new_messages.extend(tail)
-            messages_to_send = new_messages
-            print(f"📝 Historial recortado a los últimos 4 turnos para caber en el contexto")
+        # Obtener respuesta según el proveedor
+        if self.provider == "gemini":
+            bot_message = self._get_gemini_response(user_message, system_message)
+        else:
+            bot_message = self._get_local_response(user_message, system_message)
         
-        # Obtener respuesta del modelo
+        # Guardar en historial
+        self.messages.append({"role": "user", "content": user_message})
+        self.messages.append({"role": "assistant", "content": bot_message})
+        
+        return bot_message
+    
+    def _get_gemini_response(self, user_message: str, system_message: Optional[str]) -> str:
+        """Obtiene respuesta de Gemini API."""
         try:
+            # Construir el prompt completo
+            if system_message:
+                full_prompt = f"{system_message}\n\nPREGUNTA: {user_message}"
+            else:
+                full_prompt = user_message
+            
+            # Obtener respuesta
+            response = self.gemini_model.generate_content(full_prompt)
+            return response.text
+            
+        except Exception as e:
+            return f"❌ Error al obtener respuesta de Gemini: {e}"
+    
+    def _get_local_response(self, user_message: str, system_message: Optional[str]) -> str:
+        """Obtiene respuesta del modelo local (LMStudio)."""
+        try:
+            messages_to_send = self.messages.copy()
+            
+            # Agregar mensaje de sistema si existe
+            if system_message:
+                if not any(msg.get("role") == "system" for msg in messages_to_send):
+                    messages_to_send.insert(0, {"role": "system", "content": system_message})
+            
+            # Agregar pregunta del usuario
+            messages_to_send.append({"role": "user", "content": f"PREGUNTA: {user_message}"})
+            
+            # Limitar historial si es muy largo
+            if len([m for m in messages_to_send if m.get("role") != "system"]) > 8:
+                new_messages = [m for m in messages_to_send if m.get("role") == "system"]
+                tail = [m for m in messages_to_send if m.get("role") != "system"][-8:]
+                new_messages.extend(tail)
+                messages_to_send = new_messages
+            
+            # Obtener respuesta
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=messages_to_send,
@@ -199,16 +262,10 @@ Responde en español, de forma clara y directa."""
                 max_tokens=1000
             )
             
-            bot_message = response.choices[0].message.content
-            
-            # Guardar en historial
-            self.messages.append({"role": "user", "content": user_message})
-            self.messages.append({"role": "assistant", "content": bot_message})
-            
-            return bot_message
+            return response.choices[0].message.content
             
         except Exception as e:
-            return f"❌ Error al obtener respuesta: {e}"
+            return f"❌ Error al obtener respuesta local: {e}"
     
     def clear_chat_history(self):
         """Limpia el historial de chat."""
@@ -220,6 +277,8 @@ Responde en español, de forma clara y directa."""
         try:
             stats = self.rag.get_stats()
             print("\n📊 Estadísticas del Sistema:")
+            print(f"  - Proveedor: {self.provider}")
+            print(f"  - Modelo: {self.model_name}")
             print(f"  - Chunks en BD: {stats['total_chunks']}")
             print(f"  - Modelo de embeddings: {stats['embedding_model']}")
             print(f"  - Ruta BD: {stats['database_path']}")
@@ -227,21 +286,18 @@ Responde en español, de forma clara y directa."""
             print("\n⚠️  No se pueden obtener las estadísticas en este momento")
     
     def interactive_chat(self, folder_path=None):
-        """
-        Inicia un chat interactivo.
-        
-        Args:
-            folder_path: Carpeta con PDFs a cargar (opcional)
-        """
+        """Inicia un chat interactivo."""
         if folder_path:
             self.load_pdfs(folder_path)
         
         print("\n" + "="*60)
-        print("🔵 Chat iniciado (escribe 'salir' para terminar)")
+        print(f"🔵 Chat iniciado con proveedor: {self.provider}")
         print("Comandos especiales:")
-        print("  - 'limpiar': Limpia el historial de chat")
+        print("  - 'salir': Termina el chat")
+        print("  - 'limpiar': Limpia el historial")
         print("  - 'stats': Muestra estadísticas")
-        print("  - 'cargar /ruta/pdf': Carga un PDF")
+        print("  - 'gemini': Cambiar a Gemini")
+        print("  - 'local': Cambiar a modelo local")
         print("="*60 + "\n")
         
         while True:
@@ -251,19 +307,24 @@ Responde en español, de forma clara y directa."""
                 if not user_input:
                     continue
                 
-                # Comandos especiales
                 if user_input.lower() in ["salir", "exit", "quit"]:
                     print("👋 Chat finalizado.")
                     break
                 
                 elif user_input.lower() == "limpiar":
                     self.clear_chat_history()
-                    print("✅ Historial limpiado\n")
                     continue
                 
                 elif user_input.lower() == "stats":
                     self.show_stats()
-                    print()
+                    continue
+                
+                elif user_input.lower() == "gemini":
+                    self.set_provider("gemini")
+                    continue
+                
+                elif user_input.lower() == "local":
+                    self.set_provider("local")
                     continue
                 
                 elif user_input.lower().startswith("cargar "):
@@ -272,13 +333,11 @@ Responde en español, de forma clara y directa."""
                         self.load_single_pdf(ruta)
                     else:
                         self.load_pdfs(ruta)
-                    print()
                     continue
                 
-                # Chat normal con RAG
                 print("\n⏳ Procesando...")
                 response = self.get_response(user_input, use_rag=True)
-                print(f"🤖 Modelo: {response}\n")
+                print(f"🤖 {self.provider.capitalize()}: {response}\n")
                 
             except KeyboardInterrupt:
                 print("\n👋 Chat interrumpido.")
@@ -288,15 +347,12 @@ Responde en español, de forma clara y directa."""
 
 
 if __name__ == "__main__":
-    # Ejemplo de uso
     chatbot = ChatbotRAG()
     
-    # Crear carpeta para PDFs si no existe
     pdf_folder = "./pdfs"
     if not os.path.exists(pdf_folder):
         os.makedirs(pdf_folder)
         print(f"📂 Carpeta creada: {pdf_folder}")
         print(f"⚠️  Coloca tus PDFs en: {pdf_folder}")
     
-    # Iniciar chat interactivo
     chatbot.interactive_chat(folder_path=pdf_folder)

@@ -4,3 +4,5 @@ chromadb
 sentence-transformers
 numpy
 flet
+google-generativeai
+python-dotenv
