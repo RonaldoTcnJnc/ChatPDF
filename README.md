@@ -1,132 +1,121 @@
-# 📚 RAG Chatbot v2 - Guía de Uso (Fullstack)
+# 🤖 ChatBot RAG con Voz (Local & Gemini)
 
-Un sistema RAG (Retrieval-Augmented Generation) avanzado que combina un Backend potente (FastAPI) con un Frontend moderno (React), permitiendo chat con voz y texto usando modelos Locales o Gemini.
+Un sistema avanzado de **Chat con PDFs** que combina la privacidad de modelos locales (vía LMStudio) con la potencia de la nube (Gemini 1.5/2.5 Flash), todo controlado por voz.
 
-## 🚀 Instalación Rápida
+---
 
-### Backend (Python)
+## 1. ¿Qué es este proyecto?
+
+Este es un **Asistente de Inteligencia Artificial Fullstack** diseñado para permitirte "chatear" con tus propios documentos PDF. A diferencia de ChatGPT estándar, este sistema tiene acceso directo a tus archivos privados dentro de tu ordenador.
+
+**Características Únicas:**
+- **🎙️ Dictado por Voz Real**: Habla naturalmente en español. El sistema transcribe tu voz usando modelos de Google (Gemini) para una precisión perfecta.
+- **🧠 Doble Motor de IA**: Elige entre **Gemini 2.5 Flash** (rápido/nube) o **Modelos Locales** (privacidad total/offline vía LMStudio).
+- **📄 RAG (Retrieval-Augmented Generation)**: Tus PDFs se procesan y buscan semánticamente para dar respuestas basas en HECHOS, no alucinaciones.
+
+---
+
+## 2. ¿Cómo funciona?
+
+El sistema sigue un flujo de datos moderno:
+
+1.  **Ingesta**: Subes un PDF (vía Web o Carpeta). El backend lo lee y divide en "chunks" (fragmentos).
+2.  **Vectorización**: `Sentence-Transformers` convierte el texto en vectores numéricos.
+3.  **Almacenamiento**: Se guardan en `ChromaDB`, una base de datos vectorial local.
+4.  **Búsqueda**: Cuando preguntas, el sistema busca los chunks más relevantes.
+5.  **Generación**: Envía `Tu Pregunta + Contexto Encontrado` a la IA (Gemini/Llama) para generar la respuesta.
+
+**Arquitectura Técnica:**
+- **Frontend**: React + Vite + TypeScript (Interfaz moderna y rápida).
+- **Backend**: FastAPI + Python (API robusta y gestión de IA).
+- **IA/LLM**: Google Generative AI SDK + OpenAI Client (para LMStudio).
+
+---
+
+## 3. Instalación y Ejecución
+
+Para una guía paso a paso desde cero, ver [SETUP.md](./SETUP.md).
+
+### Paso A: Backend (Python)
 ```bash
+# Instalar dependencias
 pip install -r requirements.txt
+
+# Configurar API Key (crear archivo .env)
+echo "GEMINI_API_KEY=tu_clave_aqui" > .env
+
+# Iniciar Servidor
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Frontend (React)
+### Paso B: Frontend (React)
 ```bash
 cd frontend
+# Instalar dependencias node
 npm install
+# Iniciar Interfaz
+npm run dev
 ```
+🔗 Abrir: `http://localhost:5173`
 
-## 📁 Estructura del Proyecto
+---
+
+## 4. Estructura del Proyecto
 
 ```
 chatbot2/
 ├── backend/             # 🧠 Lógica del servidor
-│   ├── main.py          # API FastAPI
-│   ├── chatbot_rag.py   # Motor del Chatbot
-│   └── rag_system.py    # Sistema RAG (ChromaDB)
-├── frontend/            # 🎨 Interfaz de Usuario
-│   └── src/components/  # Componentes React
-├── pdfs/               # 📄 Carpeta para tus PDFs
-├── requirements.txt    # Dependencias Python
-├── SETUP.md            # Guía detallada de instalación
-└── .env                # Variables de entorno (API Keys)
+│   ├── main.py          # API FastAPI (Endpoints)
+│   ├── chatbot_rag.py   # Orquestador del Chatbot
+│   └── rag_system.py    # Motor RAG (ChromaDB)
+├── frontend/            # 🎨 Interfaz Web
+│   └── src/
+│       └── components/  # ChatInterface, etc.
+├── pdfs/               # 📄 Carpeta de almacenamiento de PDFs
+├── chroma_db/          # 💾 Base de datos vectorial (Persistente)
+├── requirements.txt    # Librerías Python
+└── README.md           # Documentación
 ```
 
-## 💻 Uso del Chatbot
+---
 
-A diferencia de la versión anterior de script único, este sistema corre un servidor y una interfaz web.
+## 5. Configuración Avanzada
 
-### Paso 1: Iniciar Backend
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
+Puedes ajustar el comportamiento del RAG editando `config.json` (se crea tras el primer uso) o directamente en el código:
 
-### Paso 2: Iniciar Frontend
-```bash
-# En otra terminal
-cd frontend
-npm run dev
-```
-Abre `http://localhost:5173` en tu navegador.
-
-## 🎮 Interfaz y Comandos
-
-Ya no necesitas comandos de terminal. La interfaz web te permite:
-
-| Acción | Descripción |
-|--------|-------------|
-| **🎤 Micrófono** | **NUEVO**: Haz clic para grabar. Al parar, se transcribe tu voz automáticamente con Gemini 2.5 Flash y se envía. |
-| **📎 Clip** | Sube PDFs directamente desde el navegador. |
-| **💬 Chat** | Escribe o habla. El modelo responderá usando tus documentos. |
-| **🔄 Local/Gemini** | El sistema elige automáticamente o puedes configurar el proveedor en el backend. |
-
-## 📄 Preparar tus PDFs
-
-Tienes dos opciones:
-
-1.  **Subida Web**: Usa el botón de clip en el chat.
-2.  **Carpeta Manual**:
-    *   Crea una carpeta `pdfs` en la raíz (si no existe).
-    *   Coloca tus archivos ahí.
-    *   El sistema los indexará al iniciarse o al pedírselo.
-
-## 🔧 Configuración Avanzada
-
-### Variables de Entorno (.env)
-Crea un archivo `.env` en la raíz:
-```env
-GEMINI_API_KEY=tu_clave_de_google_aistudio
-```
-
-### Configuración del RAG (config.json)
-Si existe `config.json`, puedes ajustar:
+### Parámetros de RAG (`config.json`)
 ```json
 {
   "rag": {
-    "chunk_size": 500,
-    "chunk_overlap": 100,
-    "embeddings_model": "all-MiniLM-L6-v2"
+    "chunk_size": 500,       // Palabras por fragmento (más alto = más contexto, más lento)
+    "chunk_overlap": 100,    // Palabras repetidas entre fragmentos para continuidad
+    "embeddings_model": "all-MiniLM-L6-v2", // Modelo ligero y rápido
+    "db_path": "./chroma_db"
   }
 }
 ```
 
-## 📊 Cómo Funciona el RAG Actual
-
-```
-[Voz del Usuario] → [Transcribir con Gemini] → [Texto]
-                                                  ↓
-                                          [Buscar en ChromaDB]
-                                                  ↓
-[Gemini/Local LLM] ← [Contexto PDF] + [Pregunta]
-        ↓
-[Respuesta al Frontend]
-```
-
-## 🛠️ Troubleshooting
-
-### Error: "Error 500 en Transcripción"
-- Verifica que tienes la `GEMINI_API_KEY` en tu archivo `.env`.
-- Revisa que tu conexión a internet funcione (para llamar a Gemini).
-
-### El frontend no conecta
-- Asegúrate de que el backend está corriendo en el puerto 8000.
-- Revisa la consola del navegador (F12) para ver errores de red.
-
-### Permisos de Micrófono
-- El navegador te pedirá permiso la primera vez. Si lo deniegas, no podrás usar el dictado.
-
-## 📚 Características Nuevas
-
-✅ **Dictado por Voz Full**: Transcripción servidor-servidor de alta calidad.
-✅ **Interfaz React**: Mucho más rápida y amigable que la terminal.
-✅ **Gestión de Archivos**: Sube y borra PDFs desde la UI.
-✅ **Doble Motor**: Cambia entre Gemini (Nube) y Local (LMStudio) fácilmente.
-
-## 🚀 Próximos Pasos
-
-1.  **Mejorar UI**: Agregar temas oscuro/claro.
-2.  **Historial Persistente**: Guardar chats en base de datos.
-3.  **Más Modelos**: Soportar OpenAI o Anthropic.
+### Configuración de Modelos
+- **Gemini**: Se configura en `.env`. Modelo por defecto: `gemini-2.5-flash`.
+- **Local (LMStudio)**: Por defecto busca en `http://localhost:1234/v1`. Puedes cambiar esto en `chatbot_rag.py` o `config.json`.
 
 ---
 
-¿Dudas? Revisa `SETUP.md` para una instalación paso a paso desde cero.
+## 6. Solución de Problemas (Troubleshooting)
+
+### ❌ Error 500 al Transcribir Audio
+- **Causa**: Falta la API Key o bloqueo de archivos temporales.
+- **Solución**: 
+  1. Verifica que `.env` tenga `GEMINI_API_KEY`.
+  2. Reinicia el backend si acabas de crear el `.env`.
+
+### ❌ "No hay información en la base de datos"
+- **Causa**: No has subido PDFs o la carpeta `pdfs/` está vacía.
+- **Solución**: Usa el botón de **Clip 📎** en el chat para subir un documento, o copia archivos manualmente a la carpeta `pdfs/` y reinicia.
+
+### ❌ El Frontend no conecta (Network Error)
+- **Causa**: El backend no está corriendo o el puerto 8000 está ocupado.
+- **Solución**: Asegúrate de ver el mensaje "Application startup complete" en la terminal de Python.
+
+---
+*Proyecto Open Source - Combina lo mejor de la Nube y el Local.*
