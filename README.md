@@ -1,191 +1,132 @@
-# 📚 RAG Chatbot - Guía de Uso
+# 📚 RAG Chatbot v2 - Guía de Uso (Fullstack)
 
-Un sistema RAG (Retrieval-Augmented Generation) local que mejora tu chatbot Llama 3 con información de PDFs.
+Un sistema RAG (Retrieval-Augmented Generation) avanzado que combina un Backend potente (FastAPI) con un Frontend moderno (React), permitiendo chat con voz y texto usando modelos Locales o Gemini.
 
 ## 🚀 Instalación Rápida
 
+### Backend (Python)
 ```bash
 pip install -r requirements.txt
+```
+
+### Frontend (React)
+```bash
+cd frontend
+npm install
 ```
 
 ## 📁 Estructura del Proyecto
 
 ```
 chatbot2/
-├── a.py                 # Script original (puedes reemplazarlo)
-├── chatbot_rag.py       # ✨ Chatbot mejorado con RAG
-├── rag_system.py        # 🧠 Sistema RAG principal
-├── requirements.txt     # Dependencias
-├── README.md            # Este archivo
-├── pdfs/               # 📄 Carpeta para tus PDFs (crear manualmente)
-└── chroma_db/          # Base de datos de embeddings (se crea automáticamente)
+├── backend/             # 🧠 Lógica del servidor
+│   ├── main.py          # API FastAPI
+│   ├── chatbot_rag.py   # Motor del Chatbot
+│   └── rag_system.py    # Sistema RAG (ChromaDB)
+├── frontend/            # 🎨 Interfaz de Usuario
+│   └── src/components/  # Componentes React
+├── pdfs/               # 📄 Carpeta para tus PDFs
+├── requirements.txt    # Dependencias Python
+├── SETUP.md            # Guía detallada de instalación
+└── .env                # Variables de entorno (API Keys)
 ```
 
 ## 💻 Uso del Chatbot
 
-### Método 1: Chat Interactivo Simple
+A diferencia de la versión anterior de script único, este sistema corre un servidor y una interfaz web.
 
+### Paso 1: Iniciar Backend
 ```bash
-python chatbot_rag.py
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Esto iniciará un chat interactivo donde:
-- Los PDFs se cargarán automáticamente desde la carpeta `./pdfs/`
-- Cada pregunta buscará información relevante en los documentos
-- El modelo usará el contexto para generar respuestas más precisas
-
-### Método 2: Uso Programático
-
-```python
-from chatbot_rag import ChatbotRAG
-
-# Inicializar
-chatbot = ChatbotRAG(
-    base_url="http://localhost:1234/v1",
-    model_name="lmstudio-community/Meta-Llama-3-8B-Instruct",
-    rag_db_path="./chroma_db"
-)
-
-# Cargar PDFs
-chatbot.load_pdfs("./pdfs")
-
-# O cargar un PDF específico
-chatbot.load_single_pdf("./papers/research_paper.pdf")
-
-# Obtener respuesta
-response = chatbot.get_response("¿Cuál es el tema principal del paper?")
-print(response)
-
-# Ver estadísticas
-chatbot.show_stats()
+### Paso 2: Iniciar Frontend
+```bash
+# En otra terminal
+cd frontend
+npm run dev
 ```
+Abre `http://localhost:5173` en tu navegador.
 
-## 🎮 Comandos del Chat Interactivo
+## 🎮 Interfaz y Comandos
 
-Dentro del chat, puedes usar estos comandos:
+Ya no necesitas comandos de terminal. La interfaz web te permite:
 
-| Comando | Descripción |
-|---------|-------------|
-| `salir`, `exit`, `quit` | Termina el chat |
-| `limpiar` | Limpia el historial de conversación |
-| `stats` | Muestra estadísticas del sistema |
-| `cargar /ruta/pdf` | Carga un PDF específico |
-| `cargar /ruta/carpeta` | Carga todos los PDFs de una carpeta |
+| Acción | Descripción |
+|--------|-------------|
+| **🎤 Micrófono** | **NUEVO**: Haz clic para grabar. Al parar, se transcribe tu voz automáticamente con Gemini 2.5 Flash y se envía. |
+| **📎 Clip** | Sube PDFs directamente desde el navegador. |
+| **💬 Chat** | Escribe o habla. El modelo responderá usando tus documentos. |
+| **🔄 Local/Gemini** | El sistema elige automáticamente o puedes configurar el proveedor en el backend. |
 
 ## 📄 Preparar tus PDFs
 
-1. Crea una carpeta `pdfs` en el directorio del proyecto:
-   ```bash
-   mkdir pdfs
-   ```
+Tienes dos opciones:
 
-2. Coloca tus PDFs de investigación o papers en esa carpeta:
-   ```
-   pdfs/
-   ├── paper1.pdf
-   ├── paper2.pdf
-   ├── research.pdf
-   └── ...
-   ```
-
-3. Inicia el chatbot - los PDFs se cargarán automáticamente
+1.  **Subida Web**: Usa el botón de clip en el chat.
+2.  **Carpeta Manual**:
+    *   Crea una carpeta `pdfs` en la raíz (si no existe).
+    *   Coloca tus archivos ahí.
+    *   El sistema los indexará al iniciarse o al pedírselo.
 
 ## 🔧 Configuración Avanzada
 
-### Personalizar el Tamaño de Chunks
-
-En `rag_system.py`, modifica el método `chunk_text()`:
-
-```python
-def chunk_text(self, text, chunk_size=500, overlap=100):
-    # chunk_size: número de palabras por chunk (aumentar = contexto más largo)
-    # overlap: palabras que se repiten entre chunks (mejor continuidad)
+### Variables de Entorno (.env)
+Crea un archivo `.env` en la raíz:
+```env
+GEMINI_API_KEY=tu_clave_de_google_aistudio
 ```
 
-### Cambiar el Modelo de Embeddings
-
-En `chatbot_rag.py`:
-
-```python
-chatbot = ChatbotRAG(
-    rag_db_path="./chroma_db"
-    # Modelos disponibles:
-    # - "all-MiniLM-L6-v2" (por defecto, rápido)
-    # - "all-mpnet-base-v2" (más preciso, más lento)
-    # - "multilingual-e5-base" (multiidioma)
-)
+### Configuración del RAG (config.json)
+Si existe `config.json`, puedes ajustar:
+```json
+{
+  "rag": {
+    "chunk_size": 500,
+    "chunk_overlap": 100,
+    "embeddings_model": "all-MiniLM-L6-v2"
+  }
+}
 ```
 
-### Número de Documentos a Recuperar
-
-En el método `get_response()`:
-
-```python
-response = chatbot.get_response(
-    user_message,
-    use_rag=True,
-    k=5  # Cambiar a 5, 10, etc. para más contexto
-)
-```
-
-## 📊 Cómo Funciona el RAG
+## 📊 Cómo Funciona el RAG Actual
 
 ```
-[Pregunta del Usuario]
+[Voz del Usuario] → [Transcribir con Gemini] → [Texto]
+                                                  ↓
+                                          [Buscar en ChromaDB]
+                                                  ↓
+[Gemini/Local LLM] ← [Contexto PDF] + [Pregunta]
         ↓
-[Generar Embedding]
-        ↓
-[Buscar en ChromaDB] ← Recupera chunks similares
-        ↓
-[Preparar Contexto] ← Información relevante
-        ↓
-[Enviar al Modelo] → [Llama 3 Genera Respuesta]
-        ↓
-[Respuesta Mejorada]
+[Respuesta al Frontend]
 ```
 
 ## 🛠️ Troubleshooting
 
-### Error: "No hay información en la base de datos"
-- Verifica que los PDFs estén en la carpeta `pdfs/`
-- Usa el comando `stats` para ver cuántos chunks se han cargado
-- Carga manualmente con: `cargar ./pdfs`
+### Error: "Error 500 en Transcripción"
+- Verifica que tienes la `GEMINI_API_KEY` en tu archivo `.env`.
+- Revisa que tu conexión a internet funcione (para llamar a Gemini).
 
-### El modelo no responde
-- Asegúrate de que LMStudio esté corriendo en `localhost:1234`
-- Prueba con el script original `a.py` primero
-- Verifica que el modelo está cargado en LMStudio
+### El frontend no conecta
+- Asegúrate de que el backend está corriendo en el puerto 8000.
+- Revisa la consola del navegador (F12) para ver errores de red.
 
-### Los embeddings son lentos
-- El modelo `all-MiniLM-L6-v2` es el más rápido
-- Reduce el tamaño de los PDFs
-- Aumenta `chunk_size` en el método `chunk_text()`
+### Permisos de Micrófono
+- El navegador te pedirá permiso la primera vez. Si lo deniegas, no podrás usar el dictado.
 
-## 📚 Características
+## 📚 Características Nuevas
 
-✅ Extracción automática de PDFs con PyMuPDF  
-✅ Embeddings locales con Sentence Transformers  
-✅ Base de datos vectorial con ChromaDB  
-✅ Recuperación rápida y precisa de información  
-✅ Historial de conversación  
-✅ Modelos locales (sin API externa)  
-✅ Interfaz interactiva amigable  
+✅ **Dictado por Voz Full**: Transcripción servidor-servidor de alta calidad.
+✅ **Interfaz React**: Mucho más rápida y amigable que la terminal.
+✅ **Gestión de Archivos**: Sube y borra PDFs desde la UI.
+✅ **Doble Motor**: Cambia entre Gemini (Nube) y Local (LMStudio) fácilmente.
 
 ## 🚀 Próximos Pasos
 
-1. **Mejorar contexto**: Ajusta `chunk_size` y `overlap`
-2. **Más precisión**: Cambia el modelo de embeddings
-3. **Base de datos persistente**: Usa ChromaDB para guardar embeddings
-4. **Interfaz web**: Agrega una UI con Gradio o Streamlit
-5. **Búsqueda semántica**: Experimenta con diferentes `k` values
-
-## 📝 Notas
-
-- Los PDFs se procesan una sola vez y se guardan en `chroma_db/`
-- Los embeddings son ligeros (~26MB para el modelo por defecto)
-- Recomendado para papers, papers de investigación, documentos técnicos
-- Funciona completamente offline (después de cargar los modelos)
+1.  **Mejorar UI**: Agregar temas oscuro/claro.
+2.  **Historial Persistente**: Guardar chats en base de datos.
+3.  **Más Modelos**: Soportar OpenAI o Anthropic.
 
 ---
 
-¿Preguntas? Consulta la documentación de ChromaDB y Sentence Transformers para más opciones.
+¿Dudas? Revisa `SETUP.md` para una instalación paso a paso desde cero.
