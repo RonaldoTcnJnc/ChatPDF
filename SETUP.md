@@ -1,156 +1,100 @@
-📦 SETUP Y CONFIGURACIÓN - Sistema RAG Chatbot Local
-═════════════════════════════════════════════════════════
+# � Sistema RAG Chatbot con Soporte de Voz (Gemini & Local)
 
-✅ INSTALACIÓN COMPLETADA
+Este proyecto es un chatbot avanzado que te permite:
+1.  **Chatear con tus PDFs** (RAG: Retrieval Augmented Generation).
+2.  **Hablarle por voz** y recibir transcripciones automáticas en español.
+3.  **Usar Modelos Potentes**: Gemini 1.5/2.5 Flash (Google) o modelos Locales (LMStudio).
 
-Tu sistema RAG está listo. Aquí está todo lo que se instaló:
+---
 
-═════════════════════════════════════════════════════════
-📁 ARCHIVOS CREADOS
-═════════════════════════════════════════════════════════
+## 📋 Requisitos Previos
 
-ARCHIVOS PRINCIPALES:
-├── chatbot_rag.py          ⭐ Chatbot mejorado con RAG
-├── rag_system.py           🧠 Motor RAG (ChromaDB + embeddings)
-├── quick_start.py          🚀 Inicio rápido (recomendado)
-├── example_usage.py        📖 Ejemplos de uso
-├── tutorial.py             🎓 Tutorial interactivo
-├── requirements.txt        📋 Dependencias instaladas
-├── config.json             ⚙️  Configuración
-└── README.md               📚 Documentación completa
+Antes de empezar, necesitas instalar:
 
-═════════════════════════════════════════════════════════
-🚀 INICIO RÁPIDO (3 PASOS)
-═════════════════════════════════════════════════════════
+1.  **Python 3.10+**: [Descargar aquí](https://www.python.org/downloads/)
+    *   *Importante*: Marca la casilla "Add Python to PATH" al instalar.
+2.  **Node.js (para el Frontend)**: [Descargar versión LTS](https://nodejs.org/)
 
-PASO 1: Coloca tus PDFs
-   • Crea una carpeta "pdfs" (se creará automáticamente)
-   • Copia tus papers/investigaciones ahí
-   • Ej: papers/machine_learning_survey.pdf
+---
 
-PASO 2: Asegúrate que LMStudio esté corriendo
-   • Abre LMStudio
-   • Carga el modelo: Meta-Llama-3-8B-Instruct
-   • Verifica que esté en: http://localhost:1234
+## 🛠️ Instalación desde Cero
 
-PASO 3: Inicia el chatbot
-   python quick_start.py
+Sigue estos pasos para instalar todo lo necesario.
 
-   O si prefieres ejemplos:
-   python example_usage.py
+### 1. Clonar o Descargar el Proyecto
+Si tienes git:
+```bash
+git clone <tu-repositorio>
+cd chatbot2
+```
+O simplemente descarga y descomprime el ZIP.
 
-═════════════════════════════════════════════════════════
-📦 LIBRERÍAS INSTALADAS
-═════════════════════════════════════════════════════════
+### 2. Configurar el Backend (Python)
 
-✓ openai              - Cliente compatible con LMStudio
-✓ pymupdf             - Extracción de texto desde PDFs
-✓ langchain           - Framework para trabajar con LLMs
-✓ langchain-community - Integraciones adicionales
-✓ chromadb            - Base de datos vectorial
-✓ sentence-transformers - Generación de embeddings
-✓ numpy               - Computación numérica
+Abre una terminal en la carpeta principal `chatbot2`:
 
-═════════════════════════════════════════════════════════
-🎮 COMANDOS INTERACTIVOS DEL CHAT
-═════════════════════════════════════════════════════════
+```bash
+# Opcional: Crear entorno virtual (recomendado)
+python -m venv venv
+# Activar en Windows:
+venv\Scripts\activate
+# Activar en Mac/Linux:
+source venv/bin/activate
 
-Durante el chat, puedes usar:
+# Instalar dependencias
+pip install -r requirements.txt
+```
 
-  salir           → Termina el programa
-  limpiar         → Limpia historial de chat
-  stats           → Muestra estadísticas
-  cargar /ruta    → Carga un PDF específico
-  cargar /carpeta → Carga todos los PDFs de una carpeta
+### 3. Configurar el Frontend (React)
 
-═════════════════════════════════════════════════════════
-⚙️  CONFIGURACIÓN
-═════════════════════════════════════════════════════════
+En la misma terminal (o una nueva), ve a la carpeta `frontend`:
 
-Archivo: config.json
+```bash
+cd frontend
+npm install
+```
 
-Parámetros principales:
+### 4. Configurar Variables de Entorno (.env)
 
-1. LMStudio:
-   - base_url: http://localhost:1234/v1
-   - model_name: lmstudio-community/Meta-Llama-3-8B-Instruct
+Crea un archivo llamado `.env` en la carpeta principal `chatbot2` y pega tu clave de API de Gemini:
 
-2. RAG:
-   - db_path: ./chroma_db (base de datos local)
-   - embeddings_model: all-MiniLM-L6-v2 (modelo de embeddings)
-   - chunk_size: 500 (palabras por chunk)
-   - chunk_overlap: 100 (palabras de solapamiento)
-   - retrieval_k: 3 (documentos a recuperar)
+```env
+GEMINI_API_KEY=tu_clave_aqui_consiguela_en_aistudio.google.com
+```
 
-3. Generación:
-   - temperature: 0.7 (creatividad del modelo)
-   - max_tokens: 1000 (máximo de palabras en respuesta)
+---
 
-═════════════════════════════════════════════════════════
-🔧 SOLUCIÓN DE PROBLEMAS
-═════════════════════════════════════════════════════════
+## ▶️ Cómo Ejecutarlo
 
-❌ "Error: base_url not reachable"
-→ Asegúrate que LMStudio esté corriendo en localhost:1234
+Necesitarás **dos terminales** abiertas:
 
-❌ "No hay información en la base de datos"
-→ Coloca PDFs en ./pdfs/ y reinicia
+### Terminal 1: Backend
+```bash
+# Desde la carpeta chatbot2
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+*Verás un mensaje: "Application startup complete".*
 
-❌ Los embeddings son lentos
-→ Es normal la primera vez. Se descargan ~90MB
-→ Las siguientes veces será más rápido
+### Terminal 2: Frontend
+```bash
+# Desde la carpeta chatbot2/frontend
+npm run dev
+```
+*Abre el link que aparece (usualmente `http://localhost:5173`) en tu navegador.*
 
-❌ Memoria llena
-→ Limpia la carpeta ./chroma_db/
-→ Los embeddings se recalcularán
+---
 
-═════════════════════════════════════════════════════════
-📚 RECURSOS Y APRENDIZAJE
-═════════════════════════════════════════════════════════
+## �️ Cómo Usar el Dictado por Voz
+1. Haz clic en el icono del **Micrófono** en el chat.
+2. Habla tu pregunta.
+3. Haz clic de nuevo para enviar.
+4. El audio se transcribirá automáticamente usando Gemini y se enviará.
 
-1. Ejecuta el tutorial:
-   python tutorial.py
+---
+## � Solución de Problemas Comunes
 
-2. Revisa los ejemplos:
-   python example_usage.py
+- **Error en `pip install`**: Asegúrate de tener instalado "C++ Build Tools" si Windows se queja al compilar `chromadb`.
+- **Error 500 en Transcripción**: Verifica que `GEMINI_API_KEY` sea correcta en `.env`.
+- **No graba audio**: Dale permiso al navegador para acceder a tu micrófono.
 
-3. Lee la documentación:
-   cat README.md
-
-4. Documentación oficial:
-   - ChromaDB: https://docs.trychroma.com
-   - Sentence Transformers: https://www.sbert.net
-   - LangChain: https://python.langchain.com
-
-═════════════════════════════════════════════════════════
-🎯 CASOS DE USO
-═════════════════════════════════════════════════════════
-
-✅ Análisis de papers científicos
-✅ Preguntas sobre documentos técnicos
-✅ Resumen de investigaciones
-✅ Extracción de información específica
-✅ Comparación entre múltiples documentos
-✅ Análisis de reportes y artículos
-
-═════════════════════════════════════════════════════════
-💡 PRÓXIMOS PASOS
-═════════════════════════════════════════════════════════
-
-1. Prueba con un PDF pequeño primero
-2. Ajusta los parámetros en config.json según tu caso
-3. Experimenta con diferentes prompts
-4. Añade más PDFs para más contexto
-5. Optimiza el chunk_size según tus documentos
-
-═════════════════════════════════════════════════════════
-✨ ¡Sistema listo para usar!
-═════════════════════════════════════════════════════════
-
-Ejecuta ahora:
-  python quick_start.py
-
-O consulta el tutorial:
-  python tutorial.py
-
-¡Que disfrutes tu chatbot RAG local! 🚀
+¡Disfruta tu Chatbot! 🤖
