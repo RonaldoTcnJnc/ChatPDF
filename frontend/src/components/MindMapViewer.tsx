@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import ReactFlow, {
     Background,
     Controls,
@@ -20,15 +20,16 @@ interface MindMapViewerProps {
     onClose: () => void;
 }
 
-const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'TB') => {
+const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
     const dagreGraph = new dagre.graphlib.Graph();
     dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-    // Width and height of nodes
-    const nodeWidth = 200;
-    const nodeHeight = 80;
+    // Configurar tamaños de nodos
+    const nodeWidth = 220;
+    const nodeHeight = 90;
 
-    dagreGraph.setGraph({ rankdir: direction });
+    // Usar layout jerárquico de arriba a abajo (Top to Bottom)
+    dagreGraph.setGraph({ rankdir: 'TB', nodesep: 100, ranksep: 120 });
 
     nodes.forEach((node) => {
         dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
@@ -38,16 +39,17 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'TB') => 
         dagreGraph.setEdge(edge.source, edge.target);
     });
 
+    // Aplicar layout Dagre
     dagre.layout(dagreGraph);
 
     const layoutedNodes = nodes.map((node) => {
         const nodeWithPosition = dagreGraph.node(node.id);
 
-        // Dagre determines the center of the node, but ReactFlow uses top-left
-        node.targetPosition = direction === 'LR' ? Position.Left : Position.Top;
-        node.sourcePosition = direction === 'LR' ? Position.Right : Position.Bottom;
+        // Dagre calcula el centro del nodo, ReactFlow usa la esquina superior izquierda
+        node.targetPosition = Position.Top;
+        node.sourcePosition = Position.Bottom;
 
-        // Adjust position so that the centre of the node is at the dagre position
+        // Ajustar posición para que el centro del nodo esté en la posición calculada
         node.position = {
             x: nodeWithPosition.x - nodeWidth / 2,
             y: nodeWithPosition.y - nodeHeight / 2,
@@ -66,6 +68,10 @@ export default function MindMapViewer({ pdfName, onClose }: MindMapViewerProps) 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [generated, setGenerated] = useState(false);
+
+    // Memoize nodeTypes and edgeTypes to avoid recreating objects on each render
+    const nodeTypes = useMemo(() => ({}), []);
+    const edgeTypes = useMemo(() => ({}), []);
 
     const generateMap = async () => {
         setLoading(true);
@@ -130,14 +136,14 @@ export default function MindMapViewer({ pdfName, onClose }: MindMapViewerProps) 
     };
 
     return (
-        <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary)' }}>
+        <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary)', overflow: 'hidden' }}>
             {/* Header */}
-            <div style={{ padding: '10px', background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text-primary)' }}>
+            <div style={{ padding: '10px', background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text-primary)', overflow: 'hidden' }}>
                     <Network size={20} color="var(--accent-primary)" />
-                    <span style={{ fontWeight: 'bold' }}>Mapa Conceptual: {pdfName}</span>
+                    <span style={{ fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Mapa Conceptual: {pdfName}</span>
                 </div>
-                <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ display: 'flex', gap: '10px', flexShrink: 0 }}>
                     {!generated && (
                         <button
                             onClick={generateMap}
@@ -154,15 +160,18 @@ export default function MindMapViewer({ pdfName, onClose }: MindMapViewerProps) 
             </div>
 
             {/* Canvas */}
-            <div style={{ flex: 1, height: '100%', width: '100%', position: 'relative' }}>
+            <div style={{ flex: 1, width: '100%', minHeight: 400, position: 'relative', overflow: 'hidden' }}>
                 {error && <div style={{ position: 'absolute', top: 10, left: 10, padding: '10px', background: '#ffe6e6', color: 'red', zIndex: 10 }}>{error}</div>}
 
                 <ReactFlow
                     nodes={nodes}
                     edges={edges}
+                    nodeTypes={nodeTypes}
+                    edgeTypes={edgeTypes}
                     onNodesChange={onNodesChange}
                     onEdgesChange={onEdgesChange}
                     fitView
+                    style={{ width: '100%', height: '100%' }}
                 >
                     <Background />
                     <Controls />

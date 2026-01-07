@@ -64,7 +64,34 @@ export default function FileUpload({ onUploadSuccess }: FileUploadProps) {
             setTimeout(() => setUploadStatus(''), 5000);
         } catch (error) {
             console.error('Upload error:', error);
-            setUploadStatus('❌ Error al cargar el archivo');
+            
+            let errorMessage = '❌ Error al cargar el archivo';
+            
+            if (axios.isAxiosError(error)) {
+                if (error.response) {
+                    // El servidor respondió con un código de error
+                    const status = error.response.status;
+                    const detail = error.response.data?.detail || error.response.statusText;
+                    
+                    if (status === 503) {
+                        errorMessage = '❌ Servidor no disponible - Verifica que el backend esté ejecutándose';
+                    } else if (status === 400) {
+                        errorMessage = `❌ ${detail}`;
+                    } else if (status === 500) {
+                        errorMessage = `❌ Error en el servidor: ${detail}`;
+                    } else {
+                        errorMessage = `❌ Error ${status}: ${detail}`;
+                    }
+                } else if (error.request) {
+                    // La solicitud fue hecha pero no se recibió respuesta
+                    errorMessage = '❌ No se pudo conectar al servidor (puerto 8000)';
+                } else {
+                    // Error en la configuración de la solicitud
+                    errorMessage = `❌ Error: ${error.message}`;
+                }
+            }
+            
+            setUploadStatus(errorMessage);
             setTimeout(() => setUploadStatus(''), 5000);
         } finally {
             setIsUploading(false);

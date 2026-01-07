@@ -15,7 +15,6 @@ import { MessageSquare, FileText, Network } from 'lucide-react';
 function App() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [useRAG, setUseRAG] = useState(true);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
 
   // View Mode State
@@ -111,15 +110,6 @@ function App() {
             <span>Configuración</span>
           </div>
 
-          <label className="toggle-option">
-            <input
-              type="checkbox"
-              checked={useRAG}
-              onChange={(e) => setUseRAG(e.target.checked)}
-            />
-            <span>Usar RAG</span>
-          </label>
-
           {systemStatus && (
             <div className="system-info">
               <div className="info-row">
@@ -157,7 +147,7 @@ function App() {
               onToggle={() => setIsChatOpen(!isChatOpen)}
               viewMode={viewMode}
             >
-              <ChatInterface selectedFile={selectedFile} useRAG={useRAG} />
+              <ChatInterface selectedFile={selectedFile} useRAG={true} />
             </CollapsibleChatPane>
           </div>
         ) : (
@@ -183,9 +173,10 @@ function CollapsibleSidebar({ children, isOpen, onToggle }: { children: React.Re
         borderRight: isOpen ? '1px solid var(--border-color)' : 'none',
         background: 'var(--bg-secondary)',
         display: 'flex',
-        flexDirection: 'column'
+        flexDirection: 'column',
+        minHeight: '100%'
       }}>
-        <div style={{ minWidth: '350px', height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ minWidth: '350px', height: '100%', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
           {children}
         </div>
       </div>
@@ -220,16 +211,11 @@ function CollapsibleSidebar({ children, isOpen, onToggle }: { children: React.Re
 
 // Collapsible Chat Pane Wrapper
 function CollapsibleChatPane({ children, isOpen, onToggle, viewMode }: { children: React.ReactNode, isOpen: boolean, onToggle: () => void, viewMode: string }) {
-  // Width logic: 
-  // If closed: 0px
-  // If open: 400px fixed (since we removed 'chat' mode, it's always side panel)
-
   const width = !isOpen ? '0px' : '400px';
   const display = !isOpen ? 'none' : 'flex';
 
   return (
-    <div style={{ position: 'relative', height: '100%', display: 'flex' }}>
-      {/* Toggle Button (Left side of chat pane) */}
+    <div style={{ position: 'relative', height: '100%', display: 'flex', minWidth: 0 }}>
       <button
         onClick={onToggle}
         style={{
@@ -257,6 +243,7 @@ function CollapsibleChatPane({ children, isOpen, onToggle, viewMode }: { childre
       <div style={{
         width: width,
         minWidth: isOpen ? '300px' : '0',
+        maxWidth: '500px',
         height: '100%',
         transition: 'width 0.3s ease',
         borderLeft: isOpen ? '1px solid var(--border-color)' : 'none',
@@ -265,7 +252,7 @@ function CollapsibleChatPane({ children, isOpen, onToggle, viewMode }: { childre
         flexDirection: 'column',
         overflow: 'hidden'
       }}>
-        <div style={{ flex: 1, display: display, overflow: 'hidden' }}>
+        <div style={{ flex: 1, display: display, overflow: 'hidden', flexDirection: 'column' }}>
           {children}
         </div>
       </div>

@@ -45,6 +45,39 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### 📌 Dependencias OCR (EasyOCR + PyTorch — instalación recomendada en CPU)
+
+EasyOCR requiere PyTorch. En muchos entornos de Windows es más sencillo instalar la variante **CPU** de PyTorch. Recomendado si no dispones de GPU o no quieres gestionar CUDA.
+
+Para instalar en Windows (CPU):
+
+```bash
+# Actualizar pip
+python -m pip install --upgrade pip
+# Instalar PyTorch (CPU wheels) y dependencias de audio/vision
+python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
+# Instalar EasyOCR y Pillow (si no están ya)
+python -m pip install easyocr Pillow
+```
+
+Para Mac/Linux (CPU):
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
+python -m pip install easyocr Pillow
+```
+
+Verificación rápida:
+
+```bash
+python -c "import torch, easyocr; print('torch', torch.__version__, 'easyocr', easyocr.__version__)"
+```
+
+Nota: si tienes GPU y deseas CUDA, usa las instrucciones oficiales de PyTorch en https://pytorch.org/ para elegir la rueda correcta (CUDA version).
+
+(He añadido `torch` a `requirements.txt` para que quede registrada como dependencia; la instalación en algunos sistemas puede requerir el index-url mostrado arriba.)
+
 ### 3. Configurar el Frontend (React)
 
 En la misma terminal (o una nueva), ve a la carpeta `frontend`:

@@ -15,13 +15,38 @@ for env_var in ['SENTENCE_TRANSFORMERS_HOME', 'HF_HOME', 'TRANSFORMERS_CACHE']:
     if cache_dir:
         os.makedirs(cache_dir, exist_ok=True)
 
+# Crear directorio de PDFs si no existe
+pdfs_dir = Path(__file__).parent / 'pdfs'
+pdfs_dir.mkdir(exist_ok=True)
+
 if __name__ == "__main__":
     import uvicorn
     from main import app
     
-    print("\n" + "="*60)
-    print("[SERVER] Iniciando servidor FastAPI")
-    print(f"[SERVER] Cache directory: {os.environ.get('SENTENCE_TRANSFORMERS_HOME')}")
-    print("="*60 + "\n")
+    print("\n" + "="*70)
+    print("🚀 [SERVER] Iniciando servidor FastAPI")
+    print("="*70)
+    print(f"📍 Dirección: http://0.0.0.0:8000")
+    print(f"📍 Frontend en: http://localhost:5173")
+    print(f"📍 API Docs: http://localhost:8000/docs")
+    print(f"📚 Cache: {os.environ.get('SENTENCE_TRANSFORMERS_HOME')}")
+    print("="*70 + "\n")
     
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    try:
+        uvicorn.run(
+            app, 
+            host="0.0.0.0", 
+            port=8000, 
+            log_level="info",
+            # Mostrar más detalles en caso de error
+            access_log=True
+        )
+    except KeyboardInterrupt:
+        print("\n\n⛔ [SERVER] Servidor detenido por el usuario")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n\n❌ [SERVER] Error al iniciar el servidor: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+

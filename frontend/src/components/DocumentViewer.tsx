@@ -23,36 +23,76 @@ export default function DocumentViewer({ file, onClose }: DocumentViewerProps) {
     const [numPages, setNumPages] = useState<number>(0);
     const [pageNumber, setPageNumber] = useState<number>(1);
     const [scale, setScale] = useState(1.0);
+    const [error, setError] = useState<string | null>(null);
+    const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+    const [loading, setLoading] = useState(true);
 
     const [query, setQuery] = useState('');
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [showResults, setShowResults] = useState(false);
 
-    // Reset state when file changes
     useEffect(() => {
         setPageNumber(1);
         setSearchResults([]);
         setQuery('');
+        setError(null);
+        setPdfUrl(null);
+        setLoading(true);
+
+        // Cargar el PDF desde el backend
+        if (file) {
+            const pdfPath = `http://localhost:8000/pdfs/${file}`;
+            setPdfUrl(pdfPath);
+            setLoading(false);
+        }
     }, [file]);
 
     function onDocumentLoadSuccess({ numPages }: { numPages: number }): void {
         setNumPages(numPages);
+        setError(null);
+    }
+
+    function onDocumentLoadError(error: Error): void {
+        console.error("PDF load error:", error);
+        const errorMessage = error.message || 'Estructura PDF inválida';
+        
+        // Si es un error 404, el archivo no existe
+        if (errorMessage.includes('404')) {
+            setError(`El archivo PDF no existe en el servidor. Por favor, carga nuevamente el PDF.`);
+        } else if (errorMessage.includes('Invalid PDF')) {
+            setError(`Error: El archivo no es un PDF válido`);
+        } else {
+            setError(`Error al cargar el PDF: ${errorMessage}`);
+        }
     }
 
     const handleSearch = async () => {
         if (!query.trim() || !file) return;
 
+        // Limpiar resaltados anteriores
+        const marks = document.querySelectorAll('mark');
+        marks.forEach(mark => {
+            const parent = mark.parentNode;
+            while (mark.firstChild) {
+                parent?.insertBefore(mark.firstChild, mark);
+            }
+            parent?.removeChild(mark);
+        });
+
         setIsSearching(true);
         try {
-            // Assuming the backend endpoint is /api/pdf/search
-            // Note: Backend expects "pdf_name", ensure 'file' is just the filename or correct identifier
             const response = await axios.post('/api/pdf/search', {
                 pdf_name: file,
                 query: query
             });
             setSearchResults(response.data);
             setShowResults(true);
+            
+            // Resaltar en la página actual después de los resultados
+            setTimeout(() => {
+                highlightSearchTerm();
+            }, 100);
         } catch (error) {
             console.error("Search failed", error);
             alert("Error en la búsqueda");
@@ -63,21 +103,70 @@ export default function DocumentViewer({ file, onClose }: DocumentViewerProps) {
 
     const handleResultClick = (page: number) => {
         setPageNumber(page);
+        // Desplazarse al resultado usando la palabra de búsqueda
+        setTimeout(() => {
+            highlightSearchTerm();
+        }, 100);
+    };
+
+    const highlightSearchTerm = () => {
+        if (!query.trim()) return;
+        
+        // Buscar y resaltar la palabra en el texto visible del PDF
+        const textLayer = document.querySelector('.react-pdf__Page__textContent');
+        if (textLayer) {
+            const walker = document.createTreeWalker(
+                textLayer,
+                NodeFilter.SHOW_TEXT,
+                null,
+                false
+            );
+
+            const nodesToReplace: { node: Node; regex: RegExp }[] = [];
+            let currentNode;
+            const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+
+            while ((currentNode = walker.nextNode())) {
+                if (regex.test(currentNode.textContent || '')) {
+                    nodesToReplace.push({ node: currentNode, regex });
+                }
+            }
+
+            nodesToReplace.forEach(({ node, regex }) => {
+                const span = document.createElement('span');
+                const parts = (node.textContent || '').split(regex);
+                parts.forEach((part, idx) => {
+                    if (regex.test(part)) {
+                        const mark = document.createElement('mark');
+                        mark.style.backgroundColor = 'yellow';
+                        mark.style.textDecoration = 'underline';
+                        mark.style.color = 'black';
+                        mark.textContent = part;
+                        span.appendChild(mark);
+                    } else {
+                        span.appendChild(document.createTextNode(part));
+                    }
+                });
+                node.parentNode?.replaceChild(span, node);
+            });
+        }
     };
 
     if (!file) return null;
 
     return (
-        <div className="document-viewer-container" style={{ display: 'flex', height: '100%', position: 'relative' }}>
+        <div className="document-viewer-container" style={{ display: 'flex', height: '100%', position: 'relative', overflow: 'hidden', minWidth: 0 }}>
             {/* Sidebar de Búsqueda */}
             <div className={`viewer-sidebar ${showResults ? 'open' : ''}`} style={{
                 width: showResults ? '300px' : '0',
+                minWidth: 0,
                 overflow: 'hidden',
                 transition: 'width 0.3s',
                 borderRight: '1px solid var(--border-color)',
                 background: 'var(--bg-secondary)',
                 display: 'flex',
-                flexDirection: 'column'
+                flexDirection: 'column',
+                flexShrink: 0
             }}>
                 <div style={{ padding: '10px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <h3 style={{ color: 'var(--text-primary)', margin: 0 }}>Resultados</h3>
@@ -164,38 +253,65 @@ export default function DocumentViewer({ file, onClose }: DocumentViewerProps) {
                     overflow: 'auto',
                     display: 'flex',
                     justifyContent: 'center',
+                    alignItems: 'center',
                     padding: '20px'
                 }}>
-                    <Document
-                        file={`http://localhost:8000/pdfs/${file}`}
-                        onLoadSuccess={onDocumentLoadSuccess}
-                        onItemClick={({ pageNumber }) => setPageNumber(pageNumber)}
-                    >
-                        <Page pageNumber={pageNumber} scale={scale}>
-                            {searchResults
-                                .filter(r => r.page === pageNumber)
-                                .map((result, idx) => {
-                                    if (!result.rect) return null;
-                                    const [x0, y0, x1, y1] = result.rect;
-                                    return (
-                                        <div
-                                            key={idx}
-                                            style={{
-                                                position: 'absolute',
-                                                left: x0 * scale,
-                                                top: y0 * scale,
-                                                width: (x1 - x0) * scale,
-                                                height: (y1 - y0) * scale,
-                                                backgroundColor: 'rgba(255, 255, 0, 0.4)',
-                                                border: '1px solid rgba(255, 165, 0, 0.8)',
-                                                pointerEvents: 'none' // Click through to page
-                                            }}
-                                        />
-                                    );
-                                })
-                            }
-                        </Page>
-                    </Document>
+                    {error ? (
+                        <div style={{
+                            color: '#ff6b6b',
+                            textAlign: 'center',
+                            padding: '20px',
+                            background: 'rgba(255, 107, 107, 0.1)',
+                            borderRadius: '8px',
+                            border: '1px solid #ff6b6b'
+                        }}>
+                            <p style={{ fontWeight: 'bold' }}>Error al cargar PDF</p>
+                            <p style={{ fontSize: '0.9em' }}>{error}</p>
+                            <p style={{ fontSize: '0.85em', color: '#aaa' }}>Verifica que el archivo existe y es un PDF válido</p>
+                        </div>
+                    ) : loading ? (
+                        <div style={{
+                            display: 'flex',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            height: '100%'
+                        }}>
+                            <p>Cargando PDF...</p>
+                        </div>
+                    ) : pdfUrl ? (
+                        <Document
+                            file={pdfUrl}
+                            onLoadSuccess={onDocumentLoadSuccess}
+                            onLoadError={onDocumentLoadError}
+                            onItemClick={({ pageNumber }) => setPageNumber(pageNumber)}
+                        >
+                            <Page pageNumber={pageNumber} scale={scale}>
+                                {searchResults
+                                    .filter(r => r.page === pageNumber)
+                                    .map((result, idx) => {
+                                        if (!result.rect) return null;
+                                        const [x0, y0, x1, y1] = result.rect;
+                                        return (
+                                            <div
+                                                key={idx}
+                                                style={{
+                                                    position: 'absolute',
+                                                    left: x0 * scale,
+                                                    top: y0 * scale,
+                                                    width: (x1 - x0) * scale,
+                                                    height: (y1 - y0) * scale,
+                                                    backgroundColor: 'rgba(255, 255, 0, 0.4)',
+                                                    border: '1px solid rgba(255, 165, 0, 0.8)',
+                                                    pointerEvents: 'none'
+                                                }}
+                                            />
+                                        );
+                                    })
+                                }
+                            </Page>
+                        </Document>
+                    ) : null
+                }
                 </div>
             </div>
         </div>

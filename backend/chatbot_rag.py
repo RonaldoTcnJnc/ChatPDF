@@ -1,4 +1,3 @@
-from openai import OpenAI
 from rag_system import RAGSystem
 import os
 import json
@@ -6,6 +5,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from web_search import WebSearcher
+from openai import OpenAI
 
 # Cargar variables de entorno
 # Buscar .env en el directorio actual o uno arriba (root del proyecto)
@@ -64,7 +64,7 @@ class ChatbotRAG:
     def _init_gemini(self):
         """Inicializa la conexión con Gemini API."""
         try:
-            import google.generativeai as genai
+            import google.genai as genai
             
             # Obtener API key (prioridad: env > config)
             api_key = os.getenv("GEMINI_API_KEY") or self.config.get("gemini", {}).get("api_key", "")
@@ -73,17 +73,18 @@ class ChatbotRAG:
                 print("⚠️  No se encontró GEMINI_API_KEY. Configúrala en .env o config.json")
                 raise ValueError("API key de Gemini no configurada")
             
-            genai.configure(api_key=api_key)
+            # Nueva API de google.genai
+            self.gemini_client = genai.Client(api_key=api_key)
             
             model_name = self.config.get("gemini", {}).get("model_name", "gemini-2.5-flash")
-            self.gemini_model = genai.GenerativeModel(model_name)
+            self.gemini_model = model_name
             self.model_name = model_name
             
             print(f"✅ Conectado a Gemini API")
             print(f"🧠 Modelo: {model_name}")
             
         except ImportError:
-            print("❌ google-generativeai no instalado. Ejecuta: pip install google-generativeai")
+            print("❌ google-genai no instalado. Ejecuta: pip install google-genai")
             raise
         except Exception as e:
             print(f"❌ Error al conectar con Gemini: {e}")
@@ -198,12 +199,10 @@ class ChatbotRAG:
             else:
                 k = 8  # Local: 8 chunks * 250 palabras = ~2000 palabras (~2600 tokens). Seguro para 8k.
         
-        # Obtener contexto del RAG si está activado
-        context = ""
         # Obtener contexto (RAG o Web)
         context = ""
         
-        # 1. Chequear si es búsqueda web explícita
+        # Detectar búsqueda web explícita
         search_triggers = [
             "buscar", "investigar", "search", "web", "encuentra", "find", 
             "indaga", "rastrea", "consigue", "busca", "analiza", 
@@ -211,32 +210,21 @@ class ChatbotRAG:
             "recomienda", "recomendar", "sugiere", "tienes", "conoces", "otros paper"
         ]
         
-        # Detectar qué trigger se usó (ahora busca SI ESTÁ en la frase, no solo al inicio)
         trigger_used = next((t for t in search_triggers if t in user_message.lower()), None)
         
         if trigger_used:
             print(f"🌍 Modo Web activado por keyword: '{trigger_used}'")
             
-            # Limpiar la query
-            # Intentar quitar la parte de la "orden" y dejar el tema
-            # Estrategia: Si el trigger está, tomamos lo que sigue después del trigger
             idx = user_message.lower().find(trigger_used)
-            clean_query = user_message[idx + len(trigger_used):].strip()
+            clean_query = user_message[idx + len(trigger_used):].strip() if idx != -1 else user_message
             
-            # Si el trigger estaba al final o no hay nada después, usar todo el mensaje
-            # O si lo que queda es muy corto
             if len(clean_query) < 3:
-                # Caso: "busca papers sobre X" -> trigger "busca" -> "papers sobre X" -> ok
-                # Caso: "tienes papers?" -> trigger "papers" -> "?" -> muy corto, usar mensaje entero
-                # Intentamos usar el mensaje original pero quitando palabras comunes de inicio
                 clean_query = user_message
-            
-            # Limpieza extra de preposiciones
             for prep in ["sobre", "about", "de", "for", "en", "in", "que hablen", "mas", "del", "tema"]:
                 if clean_query.lower().startswith(prep + " "):
                     clean_query = clean_query[len(prep):].strip()
+                    break
             
-            # Fallback final
             if len(clean_query) < 3:
                 clean_query = user_message
             
@@ -245,7 +233,6 @@ class ChatbotRAG:
             if not context:
                 context = "No se encontraron resultados en la web."
                 
-        # 2. Si no es web, usar RAG estándar
         elif use_rag:
             if pdf_name:
                 context = self.rag.get_context_by_pdf(user_message, pdf_name, k=k)
@@ -260,8 +247,10 @@ class ChatbotRAG:
                 context = context[-max_chars:]
                 context = "[...contexto recortado...]\n" + context
 
-                
-        # Construir el prompt del sistema
+
+        system_message = "Eres un asistente útil y amable."
+        
+        # Construir el prompt del sistema si hay contexto
         if context and "No hay información" not in context:
             system_message = f"""Eres un asistente IA educativo y versátil.
 Tu objetivo es proporcionar respuestas DETALLADAS y completas basadas en el siguiente contexto:
@@ -291,14 +280,16 @@ INSTRUCCIONES:
     def _get_gemini_response(self, user_message: str, system_message: Optional[str]) -> str:
         """Obtiene respuesta de Gemini API."""
         try:
-            # Construir el prompt completo
             if system_message:
                 full_prompt = f"{system_message}\n\nPREGUNTA: {user_message}"
             else:
                 full_prompt = user_message
             
-            # Obtener respuesta
-            response = self.gemini_model.generate_content(full_prompt)
+            # Nueva API de google.genai
+            response = self.gemini_client.models.generate_content(
+                model=self.gemini_model,
+                contents=full_prompt
+            )
             return response.text
             
         except Exception as e:
@@ -313,23 +304,18 @@ INSTRUCCIONES:
         try:
             messages_to_send = self.messages.copy()
             
-            # Agregar mensaje de sistema si existe
             if system_message:
                 if not any(msg.get("role") == "system" for msg in messages_to_send):
                     messages_to_send.insert(0, {"role": "system", "content": system_message})
             
-            # Agregar pregunta del usuario
             messages_to_send.append({"role": "user", "content": f"PREGUNTA: {user_message}"})
             
-            # Limitar historial si es muy largo
-            # Reducimos a 4 mensajes (2 turnos) para ahorrar tokens en local
             if len([m for m in messages_to_send if m.get("role") != "system"]) > 4:
                 new_messages = [m for m in messages_to_send if m.get("role") == "system"]
                 tail = [m for m in messages_to_send if m.get("role") != "system"][-4:]
                 new_messages.extend(tail)
                 messages_to_send = new_messages
             
-            # Obtener respuesta
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=messages_to_send,
@@ -377,18 +363,13 @@ INSTRUCCIONES:
         return formatted
     
     def generate_mindmap(self, pdf_path):
-        """
-        Genera un mapa conceptual (JSON de nodos y aristas) a partir de los chunks procesados por RAG.
-        """
+        """Genera un mapa conceptual (JSON de nodos y aristas) a partir de los chunks RAG."""
         import json
-        import re
         import os
 
         pdf_name = os.path.basename(pdf_path)
         print(f"🧠 Generando mapa conceptual para: {pdf_name} (usando chunks RAG)")
         
-        # 1. Obtener chunks del sistema RAG (ya procesados e indexados)
-        # Ajustar cantidad de chunks según el proveedor para evitar overflow de contexto
         max_chunks = 30 if self.provider == "gemini" else 10
         chunks = self.rag.get_all_chunks_for_pdf(pdf_name, max_chunks=max_chunks)
         
@@ -401,47 +382,41 @@ INSTRUCCIONES:
             char_limit = 25000 if self.provider == "gemini" else 6000
             text_context = full_text[:char_limit]
         else:
-            # Unir chunks en un solo texto
             text_context = "\n\n---\n\n".join(chunks) 
             
-            # Recorte de seguridad adicional para local
             if self.provider != "gemini" and len(text_context) > 10000:
                 print(f"⚠️ Recortando contexto para modelo local ({len(text_context)} -> 10000 chars)")
                 text_context = text_context[:10000] 
         
-        prompt = f"""
-        Analiza el siguiente texto de un documento académico/técnico y genera un MAPA CONCEPTUAL.
+        prompt = f"""Analiza el siguiente texto de un documento académico/técnico y genera un MAPA CONCEPTUAL.
         
-        TEXTO:
-        {text_context}
+TEXTO:
+{text_context}
+
+INSTRUCCIONES:
+1. Identifica los conceptos más importantes (Nodos).
+2. Identifica las relaciones entre ellos (Aristas/Conexiones).
+3. IMPORTANTE: EL CONTENIDO DEBE ESTAR EN ESPAÑOL. Traduce los términos si es necesario.
+4. Devuelve SALIDA EXCLUSIVAMENTE EN FORMATO JSON con la siguiente estructura:
+{{
+    "nodes": [
+        {{ "id": "1", "label": "Concepto Principal", "type": "main" }},
+        {{ "id": "2", "label": "Subconcepto A", "type": "sub" }}
+    ],
+    "edges": [
+        {{ "source": "1", "target": "2", "label": "se compone de" }}
+    ]
+}}
+
+IMPORTANTE:
+- El JSON debe ser válido.
+- No añadas texto antes ni después del JSON. NO markdown codes (```json).
+- GENERA TODO EN ESPAÑOL.
+"""
         
-        INSTRUCCIONES:
-        1. Identifica los conceptos más importantes (Nodos).
-        2. Identifica las relaciones entre ellos (Aristas/Conexiones).
-        3. IMPORTANTE: EL CONTENIDO DEBE ESTAR EN ESPAÑOL. Traduce los términos si es necesario.
-        4. Devuelve SALIDA EXCLUSIVAMENTE EN FORMATO JSON con la siguiente estructura:
-        {{
-            "nodes": [
-                {{ "id": "1", "label": "Concepto Principal", "type": "main" }},
-                {{ "id": "2", "label": "Subconcepto A", "type": "sub" }}
-            ],
-            "edges": [
-                {{ "source": "1", "target": "2", "label": "se compone de" }}
-            ]
-        }}
-        
-        IMPORTANTE:
-        - El JSON debe ser válido.
-        - No añadas texto antes ni después del JSON. NO markdown codes (```json).
-        - GENERA TODO EN ESPAÑOL.
-        """
-        
-        # Usar el proveedor configurado
         if self.provider == "gemini":
             response_text = self._get_gemini_response(prompt, system_message="Eres un experto en síntesis y visualización de conocimiento. Devuelve solo JSON.")
         else:
-            # Para local (LMStudio), usamos una llamada directa sin historial para evitar contaminación de contexto
-            # y forzamos un system prompt más estricto
             try:
                 print("🧠 Solicitando mapa conceptual a modelo local...")
                 response = self.client.chat.completions.create(
@@ -450,7 +425,7 @@ INSTRUCCIONES:
                         {"role": "system", "content": "Eres un asistente experto que SOLO habla JSON. Tu tarea es extraer entidades y relaciones de textos. NO respondas con texto, SOLO JSON válido."},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.3, # Menor temperatura para mayor determinismo en JSON
+                    temperature=0.3,
                     max_tokens=3000
                 )
                 if not response.choices:
@@ -460,30 +435,63 @@ INSTRUCCIONES:
                 print(f"❌ Error al generar mapa local: {e}")
                 raise ValueError(f"Error al conectar con modelo local: {e}")
             
-        # Limpiar respuesta (robustez para modelos locales que hablan mucho)
         clean_json = response_text
-        # Eliminar bloques de código markdown
         if "```json" in clean_json:
             clean_json = clean_json.split("```json")[1].split("```")[0]
         elif "```" in clean_json:
-            clean_json = clean_json.split("```json")[1].split("```")[0]
+            parts = clean_json.split("```")
+            clean_json = parts[1] if len(parts) > 1 else clean_json
             
         clean_json = clean_json.strip()
         
-        # Intentar encontrar el JSON si hay texto alrededor
         try:
             start = clean_json.find('{')
             end = clean_json.rfind('}') + 1
             if start != -1 and end != -1:
                 clean_json = clean_json[start:end]
-                
+            
+            # Limpiar caracteres de escape inválidos antes de parsear
+            # Reemplazar barras invertidas mal colocadas (ej: \( -> ()
+            import re
+            # Eliminar barras invertidas que preceden a caracteres que no necesitan escape
+            clean_json = re.sub(r'\\(["\\\\/])', r'\1', clean_json)  # Dejar solo escapes válidos
+            clean_json = re.sub(r'\\(?!["\\\\/bfnrtu])', '', clean_json)  # Eliminar otras barras invertidas inválidas
+            
             data = json.loads(clean_json)
             return data
         except json.JSONDecodeError as e:
-            print(f"❌ Error al decodificar JSON del LLM: {clean_json[:100]}... Error: {e}")
-            # Retorno de fallback si falla gravemente
+            print(f"❌ Error al decodificar JSON del LLM (intento 1): {clean_json[:100]}... Error: {e}")
+            
+            # Fallback: intentar con json.JSONDecoder en strict=False (si es soportado) o usar ast.literal_eval
+            try:
+                import ast
+                # Si el JSON no funciona, intentar extraer estructura manualmente
+                # Buscar arrays de objetos entre [] y {}
+                nodes_match = re.search(r'"nodes"\s*:\s*\[(.*?)\](?=\s*,\s*"edges"|$)', clean_json, re.DOTALL)
+                edges_match = re.search(r'"edges"\s*:\s*\[(.*?)\]', clean_json, re.DOTALL)
+                
+                if nodes_match and edges_match:
+                    nodes_str = '[' + nodes_match.group(1) + ']'
+                    edges_str = '[' + edges_match.group(1) + ']'
+                    
+                    # Limpiar más agresivamente
+                    for pattern in [r'\\(?!["\\\\/bfnrtu])', r'\\(?=[^"])', r'\\\\']:
+                        nodes_str = re.sub(pattern, '', nodes_str)
+                        edges_str = re.sub(pattern, '', edges_str)
+                    
+                    data = {
+                        "nodes": json.loads(nodes_str),
+                        "edges": json.loads(edges_str)
+                    }
+                    print(f"✅ JSON recuperado con regex (fallback)")
+                    return data
+            except Exception as e2:
+                print(f"⚠️ Fallback también falló: {e2}")
+            
+            # Si todo falla, retornar estructura vacía con error
+            print(f"⚠️ Usando estructura de error (JSON inválido del LLM)")
             return {
-                "nodes": [{"id": "error", "label": "Error al generar mapa", "type": "main"}],
+                "nodes": [{"id": "error", "label": "Error al generar mapa - Intenta de nuevo", "type": "main"}],
                 "edges": []
             }
 

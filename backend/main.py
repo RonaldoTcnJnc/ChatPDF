@@ -1,12 +1,13 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import shutil
 import os
 import tempfile
-import pathlib
-import google.generativeai as genai
+from pathlib import Path
+import google.genai as genai
 from chatbot_rag import ChatbotRAG
 
 # Modelos Pydantic (coincidentes con frontend/src/types.ts)
@@ -38,6 +39,22 @@ class SystemStatus(BaseModel):
     provider: str
     model: str
 
+class MindMapRequest(BaseModel):
+    pdf_name: str
+
+class MindMapResponse(BaseModel):
+    nodes: List[Dict[str, Any]] = []
+    edges: List[Dict[str, Any]] = []
+
+class SearchRequest(BaseModel):
+    pdf_name: str
+    query: str
+
+class SearchResultItem(BaseModel):
+    text: str
+    page: int
+    source: str
+
 # Configuración
 app = FastAPI(title="Chatbot RAG API")
 
@@ -59,21 +76,54 @@ if not os.path.exists(static_dir):
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # Directorios
-UPLOAD_DIR = "./pdfs"
+UPLOAD_DIR = os.path.abspath("./pdfs")
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
+    print(f"[INIT] 📂 Directorio de PDFs creado: {UPLOAD_DIR}")
 
 # Instancia global del chatbot
+chatbot = None
 try:
+    print("[INIT] Inicializando ChatbotRAG...")
     chatbot = ChatbotRAG()
+    print("[INIT] ✅ ChatbotRAG inicializado correctamente")
 except Exception as e:
-    print(f"❌ ERROR CRÍTICO al inicializar ChatbotRAG: {e}")
+    print(f"[INIT] ❌ ERROR CRÍTICO al inicializar ChatbotRAG: {e}")
     import traceback
     traceback.print_exc()
-    chatbot = None
+    print("[INIT] El servidor continuará funcionando sin RAG hasta que se resuelva el problema")
 
 class ProviderRequest(BaseModel):
     provider: str
+
+# Endpoint para servir PDFs
+@app.get("/pdfs/{filename}")
+async def get_pdf(filename: str):
+    """Sirve archivos PDF con headers correctos."""
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    
+    # Seguridad: evitar path traversal
+    if not os.path.abspath(file_path).startswith(os.path.abspath(UPLOAD_DIR)):
+        print(f"[PDF] ❌ Intento de path traversal: {filename}")
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+    
+    if not os.path.exists(file_path):
+        print(f"[PDF] ❌ Archivo no encontrado: {file_path}")
+        raise HTTPException(status_code=404, detail=f"Archivo no encontrado: {filename}")
+    
+    if not file_path.endswith(".pdf"):
+        print(f"[PDF] ❌ No es un PDF: {file_path}")
+        raise HTTPException(status_code=403, detail="Solo se permiten archivos PDF")
+    
+    file_size = os.path.getsize(file_path)
+    print(f"[PDF] 📄 Sirviendo: {filename} ({file_size} bytes)")
+    
+    return FileResponse(
+        path=file_path,
+        media_type="application/pdf",
+        filename=filename,
+        headers={"Content-Disposition": f"inline; filename={filename}"}
+    )
 
 # Endpoints
 @app.get("/api/", response_model=SystemStatus)
@@ -128,20 +178,54 @@ async def chat(request: ChatRequest):
 async def upload_pdf(file: UploadFile = File(...)):
     """Sube y procesa un archivo PDF."""
     if not chatbot:
-        raise HTTPException(status_code=503, detail="Chatbot no inicializado")
+        error_detail = "Chatbot no inicializado - Revisa los logs del servidor para más detalles"
+        print(f"[UPLOAD] ❌ {error_detail}")
+        raise HTTPException(status_code=503, detail=error_detail)
     
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Solo se permiten archivos PDF")
     
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    # Sanitizar nombre del archivo
+    import unicodedata
+    import re
+    
+    # Obtener solo el nombre base, quitando todas las extensiones (ej: proyecto.docx.pdf -> proyecto)
+    name_without_ext = os.path.splitext(file.filename)[0]  # Quita solo la última ext
+    # Pero si tiene múltiples puntos, quitar solo después del primer punto
+    if '.' in name_without_ext:
+        name_without_ext = name_without_ext.split('.')[0]
+    
+    # Normalizar el nombre
+    normalized = unicodedata.normalize('NFKD', name_without_ext)
+    normalized = normalized.encode('ascii', 'ignore').decode('ascii')
+    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', normalized)
+    safe_name = safe_name.strip('_-') or 'document'
+    
+    # Reconstruir con extensión .pdf (sin prefijo hash, ya que el nombre original es suficiente)
+    safe_filename = f"{safe_name}.pdf"
+    
+    file_path = os.path.join(UPLOAD_DIR, safe_filename)
     
     try:
-        print(f"📂 Guardando PDF: {file.filename}")
-        # Guardar archivo
+        print(f"[UPLOAD] 📂 Guardando PDF: {safe_filename}")
+        print(f"[UPLOAD] 📍 Ruta completa: {file_path}")
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        print(f"🔄 Procesando con RAG...")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"El archivo no se guardó correctamente: {file_path}")
+        
+        file_size = os.path.getsize(file_path)
+        print(f"[UPLOAD] ✅ Archivo guardado: {file_size} bytes")
+        
+        # Validar que es un PDF válido
+        with open(file_path, 'rb') as f:
+            header = f.read(4)
+            if header != b'%PDF':
+                raise ValueError(f"El archivo no es un PDF válido (header: {header})")
+        
+        print(f"[UPLOAD] ✅ PDF válido detectado")
+        print(f"[UPLOAD] 🔄 Procesando con RAG...")
         # Procesar con RAG
         chatbot.load_single_pdf(file_path)
         
@@ -149,16 +233,100 @@ async def upload_pdf(file: UploadFile = File(...)):
         stats = chatbot.rag.get_stats()
         chunks = stats.get("total_chunks", 0)
         
-        print(f"✅ PDF procesado: {chunks} chunks")
+        print(f"[UPLOAD] ✅ PDF procesado: {chunks} chunks")
         
         return UploadResponse(
-            filename=file.filename,
+            filename=safe_filename,
             status="success",
             chunks=chunks
         )
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ Error al subir PDF: {error_msg}")
+        print(f"[UPLOAD] ❌ Error al subir PDF: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                print(f"[UPLOAD] 🗑️ Archivo eliminado por error: {file_path}")
+        except:
+            pass
+        raise HTTPException(status_code=500, detail=f"Error al procesar PDF: {error_msg}")
+
+@app.post("/api/pdf/mindmap", response_model=MindMapResponse)
+async def generate_mindmap_endpoint(request: MindMapRequest):
+    """Genera un mapa conceptual (nodes/edges) a partir de un PDF cargado."""
+    if not chatbot:
+        raise HTTPException(status_code=503, detail="Chatbot no inicializado")
+
+    pdf_name = request.pdf_name
+    file_path = os.path.join(UPLOAD_DIR, pdf_name)
+
+    # Seguridad: evitar path traversal
+    if not os.path.abspath(file_path).startswith(os.path.abspath(UPLOAD_DIR)):
+        print(f"[MINDMAP] ❌ Intento de path traversal: {pdf_name}")
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+
+    if not os.path.exists(file_path):
+        print(f"[MINDMAP] ❌ Archivo no encontrado: {file_path}")
+        raise HTTPException(status_code=404, detail=f"Archivo no encontrado: {pdf_name}")
+
+    try:
+        data = chatbot.generate_mindmap(file_path)
+        nodes = data.get("nodes", []) if isinstance(data, dict) else []
+        edges = data.get("edges", []) if isinstance(data, dict) else []
+        return MindMapResponse(nodes=nodes, edges=edges)
+    except Exception as e:
+        error_msg = str(e)
+        print(f"[MINDMAP] ❌ Error generando mapa para {pdf_name}: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=error_msg)
+
+@app.post("/api/pdf/search", response_model=List[SearchResultItem])
+async def search_pdf(request: SearchRequest):
+    """Busca texto en un PDF cargado."""
+    if not chatbot:
+        raise HTTPException(status_code=503, detail="Chatbot no inicializado")
+
+    pdf_name = request.pdf_name
+    query = request.query
+    file_path = os.path.join(UPLOAD_DIR, pdf_name)
+
+    # Seguridad: evitar path traversal
+    if not os.path.abspath(file_path).startswith(os.path.abspath(UPLOAD_DIR)):
+        print(f"[SEARCH] ❌ Intento de path traversal: {pdf_name}")
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+
+    if not os.path.exists(file_path):
+        print(f"[SEARCH] ❌ Archivo no encontrado: {file_path}")
+        raise HTTPException(status_code=404, detail=f"Archivo no encontrado: {pdf_name}")
+
+    try:
+        print(f"[SEARCH] 🔍 Buscando '{query}' en {pdf_name}")
+        # Usar RAG para buscar en el PDF específico
+        results = chatbot.rag.retrieve_by_pdf(query, pdf_name, k=10)
+        
+        # Formatear resultados
+        search_results = []
+        for doc, meta in results:
+            page_num = meta.get("page", 1)  # Defecto a página 1 si no viene
+            if not isinstance(page_num, int) or page_num <= 0:
+                page_num = 1
+            search_results.append(SearchResultItem(
+                text=doc,
+                page=page_num,
+                source=pdf_name
+            ))
+        
+        # ✅ Ordenar por número de página ascendente
+        search_results.sort(key=lambda x: x.page)
+        
+        print(f"[SEARCH] ✅ {len(search_results)} resultados encontrados (ordenados por página)")
+        return search_results
+    except Exception as e:
+        error_msg = str(e)
+        print(f"[SEARCH] ❌ Error buscando en {pdf_name}: {error_msg}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=error_msg)
@@ -171,7 +339,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
         raise HTTPException(status_code=503, detail="Chatbot no inicializado")
     
     # Validar que sea audio (opcional, pero recomendado)
-    if not file.content_type.startswith("audio/"):
+    if file.content_type and not file.content_type.startswith("audio/"):
         raise HTTPException(status_code=400, detail="El archivo no es un audio válido.")
 
     try:
@@ -191,13 +359,13 @@ async def transcribe_audio(file: UploadFile = File(...)):
             print(f"✅ Archivo guardado temporalmente")
             
             # 2. Configurar Gemini
-            api_key = os.getenv("GEMINI_API_KEY") 
+            api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
-                 api_key = chatbot.config.get("gemini", {}).get("api_key")
+                api_key = chatbot.config.get("gemini", {}).get("api_key")
             
             if not api_key:
-                 print("❌ GEMINI_API_KEY no encontrada")
-                 raise HTTPException(status_code=500, detail="API Key de Gemini no encontrada")
+                print("❌ GEMINI_API_KEY no encontrada")
+                raise HTTPException(status_code=500, detail="API Key de Gemini no encontrada")
 
             genai.configure(api_key=api_key)
 
@@ -217,11 +385,11 @@ async def transcribe_audio(file: UploadFile = File(...)):
             
             # Borrar de la nube
             try:
-                 uploaded_file.delete()
-                 print("✅ Archivo eliminado de Gemini")
+                uploaded_file.delete()
+                print("✅ Archivo eliminado de Gemini")
             except Exception as e:
-                 print(f"⚠️ No se pudo eliminar archivo de Gemini: {e}")
-                 
+                print(f"⚠️ No se pudo eliminar archivo de Gemini: {e}")
+                
             transcribed_text = response.text.strip()
             print(f"✅ Transcripción exitosa: {transcribed_text[:50]}...")
             return TranscribeResponse(text=transcribed_text)
@@ -283,99 +451,6 @@ async def get_stats():
     except Exception as e:
         error_msg = str(e)
         print(f"❌ Error en /api/stats: {error_msg}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=error_msg)
-
-class SearchRequest(BaseModel):
-    pdf_name: str
-    query: str
-
-class SearchResult(BaseModel):
-    page: int
-    text: str
-    rect: Optional[List[float]] = None
-
-@app.post("/api/pdf/search", response_model=List[SearchResult])
-async def search_pdf(request: SearchRequest):
-    """Busca texto dentro de un PDF usando fitz (PyMuPDF)."""
-    if not chatbot:
-        raise HTTPException(status_code=503, detail="Chatbot no inicializado")
-    
-    try:
-        # Construir ruta completa
-        pdf_path = os.path.join(UPLOAD_DIR, request.pdf_name)
-        if not os.path.exists(pdf_path):
-             raise HTTPException(status_code=404, detail="Archivo PDF no encontrado")
-
-        results = []
-        try:
-            import fitz  # PyMuPDF
-            doc = fitz.open(pdf_path)
-            
-            for page_num, page in enumerate(doc):
-                # Búsqueda insensible a mayúsculas
-                text_instances = page.search_for(request.query)
-                
-                # Obtener snippet de texto para cada coincidencia (básico)
-                if text_instances:
-                    # Si hay coincidencias, añadimos la página
-                    # Para un snippet mejor, podríamos extraer texto alrededor del rect
-                    # Por ahora, devolvemos un extracto simple o el texto de la instancia
-                    
-                    for rect in text_instances:
-                        # Extraer un poco de contexto
-                        expanded_rect = fitz.Rect(rect.x0 - 50, rect.y0 - 20, rect.x1 + 50, rect.y1 + 20)
-                        snippet = page.get_textbox(expanded_rect)
-                        
-                        results.append(SearchResult(
-                            page=page_num + 1, # 1-indexed para UI
-                            text=snippet.replace('\n', ' ')[:100] + "...",
-                            rect=[rect.x0, rect.y0, rect.x1, rect.y1]
-                        ))
-                        # Limitamos resultados por página para no saturar
-                        if len(results) > 50: break
-                if len(results) > 50: break
-                
-            doc.close()
-            
-        except ImportError:
-            print("⚠️ PyMuPDF (fitz) no instalado. Usando búsqueda básica.")
-            # Fallback (opcional) o error
-            raise HTTPException(status_code=501, detail="Búsqueda avanzada no disponible en servidor")
-            
-        return results
-
-    except Exception as e:
-        error_msg = str(e)
-        print(f"❌ Error en búsqueda PDF: {error_msg}")
-        raise HTTPException(status_code=500, detail=error_msg)
-
-class MindMapRequest(BaseModel):
-    pdf_name: str
-
-# ... (existing code) ...
-
-@app.post("/api/pdf/mindmap")
-async def generate_mindmap(request: MindMapRequest):
-    """Genera un mapa conceptual a partir de un PDF."""
-    if not chatbot:
-        raise HTTPException(status_code=503, detail="Chatbot no inicializado")
-    
-    try:
-        # Construir ruta completa
-        pdf_path = os.path.join(UPLOAD_DIR, request.pdf_name)
-        if not os.path.exists(pdf_path):
-             raise HTTPException(status_code=404, detail="Archivo PDF no encontrado")
-
-        print(f"🧠 Generando mapa conceptual para: {request.pdf_name}")
-        mindmap_data = chatbot.generate_mindmap(pdf_path)
-        return mindmap_data
-    except ValueError as ve:
-         raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        error_msg = str(e)
-        print(f"❌ Error generando mapa: {error_msg}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=error_msg)

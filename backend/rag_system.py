@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Union
+import time
 
 import chromadb
 import pymupdf
@@ -26,8 +27,8 @@ class RAGSystem:
         # Inicializar cliente ChromaDB (versión nueva)
         self.client = chromadb.PersistentClient(path=self.db_path)
         
-        # Cargar modelo de embeddings
-        self.embedding_model = SentenceTransformer(model_name)
+        # Cargar modelo de embeddings con reintentos
+        self.embedding_model = self._load_embedding_model(model_name)
         
         # Diccionario para almacenar colecciones por PDF
         self.collections = {}
@@ -41,7 +42,34 @@ class RAGSystem:
         # Cargar colecciones existentes
         self._load_existing_collections()
         
-        print(f"✅ RAG inicializado con ChromaDB en: {db_path}")
+        print(f"OK: RAG inicializado con ChromaDB en: {db_path}")
+    
+    def _load_embedding_model(self, model_name: str):
+        """Carga el modelo de embeddings con reintentos en caso de error de conectividad."""
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"[RAG] Cargando modelo de embeddings: {model_name}...")
+                model = SentenceTransformer(model_name, trust_remote_code=True)
+                print(f"OK: Modelo cargado correctamente")
+                return model
+            except KeyboardInterrupt:
+                print(f"[RAG] Descarga interrumpida. Reintentando...")
+                time.sleep(retry_delay)
+            except Exception as e:
+                error_str = str(e)
+                if attempt < max_retries - 1:
+                    if any(x in error_str for x in ["Connection", "timeout", "socket", "ssl"]):
+                        print(f"[RAG] Error de conectividad (intento {attempt + 1}/{max_retries}): {error_str[:50]}...")
+                        print(f"[RAG] Reintentando en {retry_delay} segundos...")
+                        time.sleep(retry_delay)
+                    else:
+                        raise
+                else:
+                    print(f"ERROR: No se pudo cargar el modelo tras {max_retries} intentos")
+                    raise
     
     def _load_existing_collections(self):
         """Carga todas las colecciones de PDFs existentes."""
@@ -65,16 +93,34 @@ class RAGSystem:
     
     def _get_collection_name(self, pdf_name):
         """Genera un nombre de colección válido para ChromaDB."""
-        # ChromaDB requiere nombres: 3-512 chars, [a-zA-Z0-9._-], sin espacios ni caracteres especiales
         import hashlib
+        import unicodedata
+        
+        # ChromaDB requiere nombres: 3-512 chars, [a-zA-Z0-9._-], sin espacios ni caracteres especiales
         # Crear un hash único del nombre del PDF
         hash_value = hashlib.md5(pdf_name.encode()).hexdigest()[:8]
-        # Usar solo caracteres válidos
-        safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in pdf_name.lower())
+        
+        # Normalizar caracteres Unicode (ó -> o, á -> a, etc.)
+        normalized = unicodedata.normalize('NFKD', pdf_name)
+        normalized = normalized.encode('ascii', 'ignore').decode('ascii')
+        
+        # Usar solo caracteres válidos: [a-zA-Z0-9._-]
+        safe_name = "".join(c if c.isalnum() or c in "._-" else "" for c in normalized.lower())
+        
         # Limitar longitud y asegurar que empiece y termine con carácter válido
-        safe_name = safe_name[:50].rstrip("_").rstrip(".").rstrip("-")
-        collection_name = f"pdf_{hash_value}_{safe_name}"[:60]
-        return collection_name
+        safe_name = safe_name[:40].strip("_").strip(".").strip("-")
+        
+        # Asegurar que no esté vacío y tenga longitud mínima
+        if not safe_name or len(safe_name) < 1:
+            safe_name = "pdf"
+        
+        collection_name = f"pdf_{hash_value}_{safe_name}"
+        
+        # Validar que el nombre final sea válido
+        if len(collection_name) < 3:
+            collection_name = f"pdf_{hash_value}"
+        
+        return collection_name[:512]
     
     def _get_or_create_pdf_collection(self, pdf_name):
         """Obtiene o crea una colección para un PDF específico."""
@@ -90,141 +136,150 @@ class RAGSystem:
     
     def extract_text_from_pdf(self, pdf_path):
         """
-        Extrae texto de un PDF usando PyMuPDF, intentando detectar secciones.
+        Extrae texto de un PDF preservando la información de página.
+        Soporta:
+        - PDFs con texto embebido (extracción nativa)
+        - PDFs escaneados (OCR con EasyOCR)
+        Returns: Lista de diccionarios [{'text': str, 'page': int}]
         """
         if not os.path.exists(pdf_path):
-            return ""
+            raise FileNotFoundError(f"El archivo PDF no existe: {pdf_path}")
 
-        import re
+        # Validar que es un PDF
+        try:
+            with open(pdf_path, 'rb') as f:
+                header = f.read(4)
+                if header != b'%PDF':
+                    raise ValueError(f"El archivo no es un PDF válido (header: {header})")
+        except Exception as e:
+            raise ValueError(f"Error al validar PDF: {e}")
 
+        doc = None
+        pages_data = []
+        
         try:
             doc = pymupdf.open(pdf_path)
-            text = ""
             
-            # Preparar carpeta de imágenes para este PDF
-            pdf_name = os.path.basename(pdf_path)
-            safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in pdf_name)
-            images_dir = os.path.join(os.path.dirname(self.db_path), "static", "images", safe_name)
+            # Primer intento: Extraer texto nativo
+            print(f"[OCR] Intentando extracción de texto nativo...")
+            native_text_found = False
             
-            if not os.path.exists(images_dir):
-                os.makedirs(images_dir)
-
-            # Patrones comunes de encabezados (Español e Inglés)
-            header_patterns = [
-                r"^(?:\d+\.?\s*)?(?:abstract|resumen)\s*$",
-                r"^(?:\d+\.?\s*)?(?:keywords|palabras\s*clave)\s*$",
-                r"^(?:\d+\.?\s*)?(?:introduction|introducci[oó]n)\s*$",
-                r"^(?:\d+\.?\s*)?(?:background|antecedentes)\s*$",
-                r"^(?:\d+\.?\s*)?(?:literature\s*review|revisi[oó]n\s*literaria)\s*$",
-                r"^(?:\d+\.?\s*)?(?:methodology|methods|metodolog[ií]a|material(?:s)?\s*(?:and|&|y)\s*method(?:s)?|material(?:es)?\s*y\s*m[eé]todos)\s*$",
-                r"^(?:\d+\.?\s*)?(?:results|resultados|hallazgos)\s*$",
-                r"^(?:\d+\.?\s*)?(?:discussion|discusi[oó]n)\s*$",
-                r"^(?:\d+\.?\s*)?(?:conclusions?|conclusiones)\s*$",
-                r"^(?:\d+\.?\s*)?(?:acknowledg(?:e)?ments?|agradecimientos)\s*$",
-                r"^(?:\d+\.?\s*)?(?:references|referencias|bibliograf[ií]a)\s*$",
-                r"^(?:\d+\.?\s*)?(?:appendices|appendix|ap[eé]ndices?|anexos?|supplementary\s*material|material\s*suplementario)\s*$"
-            ]
-                
-            for page_num in range(len(doc)):
-                page = doc[page_num]
-                # Obtener bloques de texto para analizar estructura
-                blocks = page.get_text("dict")["blocks"]
-                
-                for block in blocks:
-                    if "lines" in block:
-                        for line in block["lines"]:
-                            line_text = "".join([span["text"] for span in line["spans"]]).strip()
-                            
-                            # Comprobar si es un encabezado
-                            is_header = False
-                            for pattern in header_patterns:
-                                if re.match(pattern, line_text, re.IGNORECASE):
-                                    # Normalizar nombre de sección (quitar números, mayúsculas)
-                                    clean_section = re.sub(r"^\d+\.?\s*", "", line_text).capitalize()
-                                    text += f"\n\n[[SECTION: {clean_section}]]\n\n"
-                                    is_header = True
-                                    break
-                            
-                            if not is_header:
-                                text += line_text + " "
-                        text += "\n"
-
-                # Extraer imágenes (código existente)
-                image_list = page.get_images()
-                for img_index, img in enumerate(image_list):
-                    try:
-                        xref = img[0]
-                        base_image = doc.extract_image(xref)
-                        image_bytes = base_image["image"]
-                        image_ext = base_image["ext"]
-                        image_filename = f"page_{page_num+1}_img_{img_index+1}.{image_ext}"
-                        image_path = os.path.join(images_dir, image_filename)
+            for page_num, page in enumerate(doc):
+                try:
+                    text = page.get_text()
+                    if text.strip():
+                        pages_data.append({
+                            "text": text,
+                            "page": page_num + 1,
+                            "method": "native"
+                        })
+                        native_text_found = True
+                except Exception as e:
+                    print(f"⚠️ Error al extraer página nativa {page_num + 1}: {e}")
+                    continue
+            
+            # Si encontró texto nativo, retornar
+            if native_text_found and pages_data:
+                print(f"✅ Texto extraído (nativo) de: {pdf_path} ({len(pages_data)} páginas)")
+                return pages_data
+            
+            # Segundo intento: OCR si no hay texto nativo
+            print(f"[OCR] No se encontró texto nativo. Intentando OCR...")
+            pages_data = []
+            
+            try:
+                import easyocr
+            except ImportError:
+                raise ImportError("EasyOCR no está instalado. Ejecuta: pip install easyocr")
+            
+            # Inicializar OCR (primero en español, luego inglés para máxima compatibilidad)
+            print(f"[OCR] Inicializando modelo OCR (primera ejecución puede tardar)...")
+            reader = easyocr.Reader(['es', 'en'], gpu=False)  # gpu=False para evitar problemas
+            
+            for page_num, page in enumerate(doc):
+                try:
+                    print(f"[OCR] Procesando página {page_num + 1}...")
+                    
+                    # Convertir página a imagen
+                    pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))  # 2x zoom para mejor OCR
+                    img_data = pix.tobytes("png")
+                    
+                    # Guardar temporalmente
+                    import io
+                    from PIL import Image
+                    img = Image.open(io.BytesIO(img_data))
+                    
+                    # Aplicar OCR
+                    results = reader.readtext(img, detail=0)  # detail=0 retorna solo texto
+                    text = "\n".join(results)
+                    
+                    if text.strip():
+                        pages_data.append({
+                            "text": text,
+                            "page": page_num + 1,
+                            "method": "ocr"
+                        })
+                    else:
+                        pages_data.append({
+                            "text": f"[Página vacía o no legible]",
+                            "page": page_num + 1,
+                            "method": "ocr"
+                        })
                         
-                        with open(image_path, "wb") as img_file:
-                            img_file.write(image_bytes)
-                            
-                        img_url = f"/static/images/{safe_name}/{image_filename}"
-                        text += f"\n\n![Imagen de página {page_num+1}]({img_url})\n\n"
-                    except:
-                        pass
-
-            doc.close()
-            print(f"✅ Texto estructurado extraído de: {pdf_path}")
-            return text
+                except Exception as e:
+                    print(f"⚠️ Error en OCR página {page_num + 1}: {e}")
+                    pages_data.append({
+                        "text": f"[Error al procesar página]",
+                        "page": page_num + 1,
+                        "method": "error"
+                    })
+                    continue
+            
+            if not pages_data:
+                raise ValueError(f"No se pudo extraer texto del PDF: {pdf_path}")
+            
+            print(f"✅ Texto extraído (OCR) de: {pdf_path} ({len(pages_data)} páginas)")
+            return pages_data
+            
+        except pymupdf.FileError as e:
+            raise ValueError(f"Estructura PDF corrupta o inválida: {e}")
         except Exception as e:
             print(f"❌ Error al extraer PDF {pdf_path}: {e}")
-            return None
+            raise
+        finally:
+            if doc:
+                try:
+                    doc.close()
+                except:
+                    pass
 
 
-    def chunk_text(self, text, chunk_size=250, overlap=50):
+    def chunk_text(self, pages_data, chunk_size=500, overlap=50):
         """
-        Divide el texto en chunks y detecta metadatos de sección.
-        Returns: Lista de tuplas (chunk_text, section_metadata_dict)
+        Divide el contenido de las páginas en chunks, preservando el número de página.
+        Args:
+            pages_data: Lista de dicts [{'text': str, 'page': int}]
+        Returns: 
+            Lista de tuplas (chunk_text, metadata_dict)
+            donde metadata_dict incluye {'page': int}
         """
-        import re
-        
-        # Regex para encontrar marcadores de sección inyectados
-        section_regex = r"\[\[SECTION: (.*?)\]\]"
-        
-        # Segmentar por marcadores primero para asignar secciones
-        # Esto es simple: recorremos y mantenemos "current_section"
-        
-        words = []
-        # Pre-procesar para dividir texto y marcadores. 
-        # Tokenización básica manteniendo los marcadores intactos es difícil con split simple.
-        # Usaremos iteración.
-        
-        current_section = "General"
         chunks_with_metadata = []
         
-        # Dividir por marcadores de sección
-        parts = re.split(section_regex, text)
-        
-        # parts[0] es texto pre-seccion (General). 
-        # parts[1] es nombre sección 1. parts[2] es contenido sección 1.
-        # parts[3] es nombre sección 2. parts[4] es contenido sección 2...
-        
-        # Procesar parte inicial (General)
-        if parts[0].strip():
-            current_words = parts[0].split()
-            for i in range(0, len(current_words), chunk_size - overlap):
-                chunk = " ".join(current_words[i:i + chunk_size])
-                if chunk.strip():
-                    chunks_with_metadata.append((chunk, {"section": "General"}))
-        
-        # Procesar resto
-        for i in range(1, len(parts), 2):
-            section_name = parts[i].strip()
-            section_content = parts[i+1]
+        for page_entry in pages_data:
+            text = page_entry['text']
+            page_num = page_entry['page']
             
-            section_words = section_content.split()
-            if not section_words:
+            words = text.split()
+            if not words:
                 continue
                 
-            for j in range(0, len(section_words), chunk_size - overlap):
-                chunk = " ".join(section_words[j:j + chunk_size])
-                if chunk.strip():
-                    chunks_with_metadata.append((chunk, {"section": section_name}))
+            for i in range(0, len(words), chunk_size - overlap):
+                chunk = " ".join(words[i:i + chunk_size])
+                if len(chunk) > 50: # Ignorar chunks muy pequeños
+                    chunks_with_metadata.append((
+                        chunk, 
+                        {"page": page_num}
+                    ))
         
         return chunks_with_metadata
     
@@ -232,12 +287,14 @@ class RAGSystem:
         """
         Procesa y agrega un PDF al sistema RAG en su propia colección.
         """
-        text = self.extract_text_from_pdf(pdf_path)
-        if not text:
-            return
+        try:
+            pages_data = self.extract_text_from_pdf(pdf_path)
+        except Exception as e:
+            print(f"❌ Error al procesar PDF {pdf_path}: {e}")
+            raise
         
-        # chunk_text ahora devuelve lista de (texto, metadatos_seccion)
-        chunks_data = self.chunk_text(text)
+        # chunk_text procesa esa lista y devuelve chunks con metadata de página
+        chunks_data = self.chunk_text(pages_data)
         
         # Preparar metadata base
         if metadata is None:
@@ -248,14 +305,14 @@ class RAGSystem:
         
         pdf_collection = self._get_or_create_pdf_collection(pdf_name)
         
-        for i, (chunk, section_meta) in enumerate(chunks_data):
+        for i, (chunk, page_meta) in enumerate(chunks_data):
             try:
                 embedding = self.embedding_model.encode(chunk).tolist()
                 chunk_id = f"chunk_{i}"
                 
-                # Combinar metadata base con metadata de sección
+                # Combinar metadata base con metadata de página
                 full_metadata = metadata.copy()
-                full_metadata.update(section_meta) # Añade 'section': 'Introducción', etc.
+                full_metadata.update(page_meta)  # ✅ Agregar número de página
                 
                 # Agregar a colecciones
                 pdf_collection.add(
@@ -317,6 +374,7 @@ class RAGSystem:
     def get_context(self, query, k=3):
         """
         Obtiene el contexto formateado para el modelo.
+        Returns: str (context_text)
         """
         results = self.retrieve(query, k)
         
@@ -324,10 +382,19 @@ class RAGSystem:
             return "No hay información en la base de datos."
         
         context = "Información relevante de los documentos:\n\n"
+        seen_pages = set()
+        
         for i, (doc, meta) in enumerate(results, 1):
             source = meta.get("source", "Desconocido")
-            section = meta.get("section", "General")
-            context += f"[{i}] (Fuente: {source} | Sección: {section})\n{doc}\n\n"
+            page = meta.get("page")
+            context += f"[{i}] (Fuente: {source}"
+            if page:
+                context += f" | Página: {page}"
+            context += f")\n{doc}\n\n"
+            
+            # Registrar que hemos visto esta página
+            if page and (source, page) not in seen_pages:
+                seen_pages.add((source, page))
         
         return context
     
@@ -374,13 +441,36 @@ class RAGSystem:
         Obtiene estadísticas de la base de datos.
         """
         count = self.collection.count()
-        pdf_count = len(self.collections)
+        
+        # Obtener lista de PDFs reales del directorio de uploads
+        pdf_list = []
+        try:
+            # Usar ruta absoluta del directorio pdfs (en el mismo backend)
+            backend_dir = os.path.dirname(os.path.abspath(__file__))
+            pdfs_dir = os.path.join(backend_dir, "pdfs")
+            pdfs_dir = os.path.abspath(pdfs_dir)
+            
+            print(f"[STATS] Buscando PDFs en: {pdfs_dir}")
+            
+            if os.path.exists(pdfs_dir):
+                pdf_list = sorted([f for f in os.listdir(pdfs_dir) if f.lower().endswith(".pdf")])
+                print(f"[STATS] Encontrados {len(pdf_list)} PDFs: {pdf_list}")
+            else:
+                print(f"[STATS] ⚠️ Directorio no existe: {pdfs_dir}")
+        except Exception as e:
+            print(f"[STATS] ❌ Error al listar PDFs: {e}")
+        
+        # Si no hay archivos en el directorio pero sí en memoria, limpiar memoria
+        if not pdf_list and self.collections:
+            print(f"[STATS] ⚠️ Limpiando {len(self.collections)} colecciones huérfanas de memoria")
+            self.collections.clear()
+        
         return {
             "total_chunks": count,
-            "total_pdfs": pdf_count,
+            "total_pdfs": len(pdf_list),
             "database_path": self.db_path,
             "embedding_model": self.model_name,
-            "pdfs": list(self.collections.keys())
+            "pdfs": pdf_list
         }
     
     def retrieve_by_pdf(self, query, pdf_name, k=3):
@@ -415,6 +505,7 @@ class RAGSystem:
     def get_context_by_pdf(self, query, pdf_name, k=3):
         """
         Obtiene contexto formateado solo del PDF especificado.
+        Returns: str (context_text)
         """
         results = self.retrieve_by_pdf(query, pdf_name, k)
 
@@ -422,9 +513,18 @@ class RAGSystem:
             return f"No hay información en el archivo: {pdf_name}"
         
         context = f"Información relevante de {pdf_name}:\n\n"
+        seen_pages = set()
+        
         for i, (doc, meta) in enumerate(results, 1):
-            section = meta.get("section", "General")
-            context += f"[{i}] (Sección: {section})\n{doc}\n\n"
+            page = meta.get("page")
+            context += f"[{i}]"
+            if page:
+                context += f" (Página: {page})"
+            context += f"\n{doc}\n\n"
+            
+            # Registrar que hemos visto esta página
+            if page and page not in seen_pages:
+                seen_pages.add(page)
         
         return context
 
@@ -456,55 +556,44 @@ class RAGSystem:
             print(f"❌ Error obteniendo chunks del PDF: {e}")
             return []
 
-    def delete_pdf(self, pdf_name: str) -> bool:
+    def delete_pdf(self, pdf_name):
         """
-        Elimina un PDF del sistema: borra su colección y el archivo físico.
+        Elimina un PDF completamente del sistema RAG.
         """
         try:
-            print(f"🗑️ Intentando eliminar PDF: {pdf_name}")
+            key = self._find_pdf_key(pdf_name)
+            if not key:
+                print(f"⚠️  PDF no encontrado: {pdf_name}")
+                return False
             
-            # 1. Encontrar la key interna (nombre de archivo real)
-            pdf_key = self._find_pdf_key(pdf_name)
+            # Obtener la colección
+            pdf_collection = self.collections.get(key)
+            if pdf_collection:
+                try:
+                    collection_name = self._get_collection_name(key)
+                    self.client.delete_collection(name=collection_name)
+                    del self.collections[key]
+                    print(f"✅ PDF eliminado de ChromaDB: {key}")
+                except Exception as e:
+                    print(f"⚠️  Error al eliminar colección: {e}")
             
-            # Si no se encuentra por key, intentar usar el nombre tal cual
-            target_filename = pdf_key if pdf_key else pdf_name
+            # Eliminar archivo físico si existe
+            backend_dir = os.path.dirname(os.path.abspath(__file__))
+            pdfs_dir = os.path.join(backend_dir, "pdfs")
+            file_path = os.path.join(pdfs_dir, pdf_name)
             
-            # 2. Eliminar del sistema de archivos
-            file_path = Path("./pdfs") / target_filename
-            if file_path.exists():
+            if os.path.exists(file_path):
                 try:
                     os.remove(file_path)
-                    print(f"✅ Archivo físico eliminado: {file_path}")
+                    print(f"✅ Archivo eliminado: {file_path}")
                 except Exception as e:
-                    print(f"⚠️ Error al eliminar archivo físico {file_path}: {e}")
-                    # No retornamos False aquí, intentamos borrar la colección de todos modos
-            else:
-                print(f"⚠️ Archivo físico no encontrado en: {file_path}")
-
-            # 3. Eliminar colección de ChromaDB
-            # Intentamos obtener el nombre de la colección
-            collection_name = self._get_collection_name(target_filename)
-            try:
-                self.chroma_client.delete_collection(collection_name)
-                print(f"✅ Colección eliminada: {collection_name}")
-            except ValueError:
-                print(f"⚠️ Colección {collection_name} no existía en ChromaDB")
-            except Exception as e:
-                print(f"⚠️ Error al eliminar colección {collection_name}: {e}")
-
-            # 4. Actualizar estado interno
-            if target_filename in self.collections:
-                del self.collections[target_filename]
+                    print(f"⚠️  Error al eliminar archivo: {e}")
             
-            # Si llegamos aquí, asumimos éxito (aunque el archivo no existiera, el objetivo es que ya no esté)
             return True
-
         except Exception as e:
-            print(f"❌ Error crítico en delete_pdf: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Error al eliminar PDF: {e}")
             return False
-
+    
     def _find_pdf_key(self, pdf_name):
         """Intenta localizar la clave de `self.collections` que corresponde al `pdf_name`.
 

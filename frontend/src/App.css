@@ -425,8 +425,17 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-bottom: var(--spacing-md);
+  padding: var(--spacing-md);
+  margin: -1rem;
+  /* Negate parent padding */
+  margin-bottom: var(--spacing-md);
   border-bottom: 1px solid var(--border-color);
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary);
+  /* Ensure opaque background */
+  z-index: 10;
+  backdrop-filter: blur(10px);
 }
 
 .chat-header h2 {

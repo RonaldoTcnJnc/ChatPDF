@@ -147,7 +147,7 @@ export default function ChatInterface({ selectedFile, useRAG }: ChatInterfacePro
             const request: ChatRequest = {
                 message: userMessage.content,
                 pdf_name: selectedFile || undefined,
-                use_rag: useRAG,
+                use_rag: true,
             };
 
             const response = await axios.post<ChatResponse>('/api/chat', request);
@@ -216,8 +216,8 @@ export default function ChatInterface({ selectedFile, useRAG }: ChatInterfacePro
     };
 
     return (
-        <div className="chat-interface">
-            <div className="chat-header">
+        <div className="chat-interface" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', gap: 0 }}>
+            <div className="chat-header" style={{ flexShrink: 0, borderBottom: '1px solid var(--border-color)', padding: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-primary)' }}>
                 <h2>💬 Chat con RAG</h2>
                 <div className="header-actions">
                     {speakingMessageId !== null && (
@@ -231,10 +231,7 @@ export default function ChatInterface({ selectedFile, useRAG }: ChatInterfacePro
                 </div>
             </div>
 
-            <div className="chat-info">
-                <span className="info-badge">
-                    {useRAG ? '📚 RAG Activado' : '🔇 RAG Desactivado'}
-                </span>
+            <div className="chat-info" style={{ flexShrink: 0, padding: '5px 10px', borderBottom: '1px solid var(--border-color)' }}>
                 {selectedFile && (
                     <span className="info-badge">
                         📄 {selectedFile}
@@ -242,7 +239,7 @@ export default function ChatInterface({ selectedFile, useRAG }: ChatInterfacePro
                 )}
             </div>
 
-            <div className="messages-container">
+            <div className="messages-container" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px', minHeight: 0 }}>
                 {messages.length === 0 ? (
                     <div className="empty-state">
                         <Bot size={64} className="empty-icon" />
@@ -300,7 +297,7 @@ export default function ChatInterface({ selectedFile, useRAG }: ChatInterfacePro
                 <div ref={messagesEndRef} />
             </div>
 
-            <div className="input-container">
+            <div className="input-container" style={{ flexShrink: 0, display: 'flex', gap: '10px', padding: '10px', borderTop: '1px solid var(--border-color)', background: 'var(--bg-primary)' }}>
                 <textarea
                     ref={textareaRef}
                     value={input}
@@ -309,6 +306,7 @@ export default function ChatInterface({ selectedFile, useRAG }: ChatInterfacePro
                     placeholder={isListening ? "Escuchando..." : "Escribe tu mensaje..."}
                     rows={1}
                     disabled={isLoading}
+                    style={{ flex: 1, background: 'var(--glass-bg)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '8px', color: 'var(--text-primary)', resize: 'none', minHeight: '40px', maxHeight: '100px', fontFamily: 'inherit' }}
                 />
 
                 <button
@@ -316,6 +314,7 @@ export default function ChatInterface({ selectedFile, useRAG }: ChatInterfacePro
                     disabled={isLoading}
                     className={`icon-btn mic-btn ${isListening ? 'listening' : ''}`}
                     title="Dictar por voz"
+                    style={{ background: isListening ? 'rgba(255, 107, 107, 0.1)' : 'transparent', border: 'none', cursor: 'pointer', padding: '8px', color: isListening ? '#ff6b6b' : '#a0a0b0', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '40px' }}
                 >
                     {isListening ? <MicOff size={20} /> : <Mic size={20} />}
                 </button>
@@ -324,6 +323,7 @@ export default function ChatInterface({ selectedFile, useRAG }: ChatInterfacePro
                     onClick={() => sendMessage()}
                     disabled={!input.trim() || isLoading}
                     className="send-btn"
+                    style={{ background: 'var(--accent-gradient)', border: 'none', color: 'white', padding: '8px 15px', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '40px', opacity: (!input.trim() || isLoading) ? 0.5 : 1 }}
                 >
                     <Send size={20} />
                 </button>

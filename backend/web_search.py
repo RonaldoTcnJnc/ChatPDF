@@ -1,12 +1,32 @@
-import arxiv
-from duckduckgo_search import DDGS
+try:
+    import arxiv
+except ImportError:
+    print("⚠️  arxiv no instalado. Ejecuta: pip install arxiv")
+    arxiv = None
+
+try:
+    from duckduckgo_search import DDGS
+except ImportError:
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        print("⚠️  duckduckgo_search no instalado. Ejecuta: pip install ddgs")
+        DDGS = None
 
 class WebSearcher:
     def __init__(self):
-        self.ddgs = DDGS()
+        if not DDGS:
+            print("⚠️  DDGS no disponible para búsquedas web")
+            self.ddgs = None
+        else:
+            self.ddgs = DDGS()
 
     def search_arxiv(self, query, max_results=5):
         """Busca papers académicos en ArXiv."""
+        if not arxiv:
+            print(f"⚠️  ArXiv no disponible. Instalá arxiv con: pip install arxiv")
+            return []
+        
         try:
             print(f"🔍 Buscando en ArXiv: {query}")
             client = arxiv.Client()
@@ -34,6 +54,10 @@ class WebSearcher:
 
     def search_web(self, query, max_results=5):
         """Busca información general en DuckDuckGo."""
+        if not self.ddgs:
+            print(f"⚠️  DDGS no disponible para búsquedas web")
+            return []
+        
         try:
             print(f"🔍 Buscando en DuckDuckGo: {query}")
             results = []
