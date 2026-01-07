@@ -155,6 +155,7 @@ async def chat(request: ChatRequest):
     try:
         print(f"[CHAT] Mensaje recibido: {request.message[:50]}...")
         
+        # Chat normal con RAG
         response_text = chatbot.get_response(
             user_message=request.message,
             use_rag=request.use_rag,
@@ -285,7 +286,7 @@ async def generate_mindmap_endpoint(request: MindMapRequest):
 
 @app.post("/api/pdf/search", response_model=List[SearchResultItem])
 async def search_pdf(request: SearchRequest):
-    """Busca texto en un PDF cargado."""
+    """Busca texto en un PDF cargado. Si detecta palabras clave de secciones, devuelve la sección completa."""
     if not chatbot:
         raise HTTPException(status_code=503, detail="Chatbot no inicializado")
 
@@ -304,7 +305,47 @@ async def search_pdf(request: SearchRequest):
 
     try:
         print(f"[SEARCH] 🔍 Buscando '{query}' en {pdf_name}")
-        # Usar RAG para buscar en el PDF específico
+        
+        # Detectar si es búsqueda de sección
+        query_lower = query.lower()
+        section_keywords = {
+            'title': ['título', 'titulo', 'title'],
+            'abstract': ['resumen', 'abstract', 'summary', 'sumario'],
+            'introduction': ['introducción', 'introduccion', 'introduction'],
+            'methods': ['métodos', 'metodos', 'methodology', 'metodología', 'metodologia'],
+            'results': ['resultados', 'results', 'findings', 'hallazgos'],
+            'discussion': ['discusión', 'discusion', 'discussion'],
+            'conclusion': ['conclusión', 'conclusion', 'conclusiones', 'conclusions'],
+            'references': ['referencias', 'references', 'bibliografía', 'bibliografia', 'bibliography']
+        }
+        
+        # Verificar si es búsqueda de sección
+        requested_section = None
+        for section_name, keywords in section_keywords.items():
+            if any(kw in query_lower for kw in keywords):
+                requested_section = section_name
+                break
+        
+        # Si se detecta sección, extraer contenido completo
+        if requested_section:
+            print(f"[SEARCH] 📄 Detectada sección: {requested_section}")
+            try:
+                sections = chatbot.rag.extract_pdf_sections(file_path)
+                section_content = sections.get(requested_section, "")
+                
+                if section_content and len(section_content.strip()) > 10:
+                    # Devolver la sección completa como un único resultado
+                    return [SearchResultItem(
+                        text=section_content,
+                        page=1,  # La sección puede abarcar múltiples páginas
+                        source=pdf_name
+                    )]
+            except Exception as e:
+                print(f"[SEARCH] ⚠️ No se pudo extraer sección, buscando con RAG: {e}")
+                # Si falla la extracción, hacer búsqueda normal por la palabra clave
+                pass
+        
+        # Búsqueda normal con RAG
         results = chatbot.rag.retrieve_by_pdf(query, pdf_name, k=10)
         
         # Formatear resultados

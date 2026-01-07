@@ -6,6 +6,7 @@ import time
 import chromadb
 import pymupdf
 from sentence_transformers import SentenceTransformer
+from section_extractor import SectionExtractor
 
 class RAGSystem:
     def __init__(self, db_path: str = "./chroma_db", model_name: str = "all-MiniLM-L6-v2"):
@@ -283,18 +284,21 @@ class RAGSystem:
         
         return chunks_with_metadata
     
-    def add_pdf(self, pdf_path, metadata=None):
+    def add_pdf(self, pdf_path, metadata=None, use_sections=True):
         """
         Procesa y agrega un PDF al sistema RAG en su propia colección.
+        Ahora divide automáticamente por secciones (Abstract, Introducción, etc.)
+        
+        Args:
+            pdf_path: Ruta al archivo PDF
+            metadata: Metadata adicional
+            use_sections: Si True, extrae y organiza por secciones. Si False, usa chunks genéricos.
         """
         try:
             pages_data = self.extract_text_from_pdf(pdf_path)
         except Exception as e:
             print(f"❌ Error al procesar PDF {pdf_path}: {e}")
             raise
-        
-        # chunk_text procesa esa lista y devuelve chunks con metadata de página
-        chunks_data = self.chunk_text(pages_data)
         
         # Preparar metadata base
         if metadata is None:
@@ -305,14 +309,34 @@ class RAGSystem:
         
         pdf_collection = self._get_or_create_pdf_collection(pdf_name)
         
+        # Fusionar todo el texto de las páginas
+        full_text = "\n\n".join([page["text"] for page in pages_data])
+        
+        if use_sections:
+            # Usar extractor de secciones
+            print(f"📑 Extrayendo secciones del PDF...")
+            section_extractor = SectionExtractor()
+            sections = section_extractor.extract_sections(full_text, pages_data)
+            chunks_data = section_extractor.prepare_for_rag()
+            
+            print(f"📊 Resumen de secciones:")
+            for section_type, summary in section_extractor.get_section_summary().items():
+                print(f"   - {section_type}: {summary['word_count']} palabras, {summary['chunks']} chunks")
+        else:
+            # Usar chunks genéricos (método antiguo)
+            print(f"📦 Usando chunks genéricos (sin secciones)...")
+            chunks_data = self.chunk_text(pages_data)
+        
+        # Agregar chunks a las colecciones
+        chunk_count = 0
         for i, (chunk, page_meta) in enumerate(chunks_data):
             try:
                 embedding = self.embedding_model.encode(chunk).tolist()
                 chunk_id = f"chunk_{i}"
                 
-                # Combinar metadata base con metadata de página
+                # Combinar metadata base con metadata de página/sección
                 full_metadata = metadata.copy()
-                full_metadata.update(page_meta)  # ✅ Agregar número de página
+                full_metadata.update(page_meta)
                 
                 # Agregar a colecciones
                 pdf_collection.add(
@@ -328,10 +352,14 @@ class RAGSystem:
                     documents=[chunk],
                     metadatas=[full_metadata]
                 )
+                chunk_count += 1
             except Exception as e:
                 print(f"❌ Error al procesar chunk {i}: {e}")
         
-        print(f"✅ PDF procesado: {pdf_name} - {len(chunks_data)} chunks agregados con estructura")
+        if use_sections:
+            print(f"✅ PDF procesado con secciones: {pdf_name} - {chunk_count} chunks agregados")
+        else:
+            print(f"✅ PDF procesado (genérico): {pdf_name} - {chunk_count} chunks agregados")
     
     def add_pdf_folder(self, folder_path):
         """
@@ -374,6 +402,7 @@ class RAGSystem:
     def get_context(self, query, k=3):
         """
         Obtiene el contexto formateado para el modelo.
+        Ahora incluye información sobre secciones (Abstract, Introducción, etc.)
         Returns: str (context_text)
         """
         results = self.retrieve(query, k)
@@ -387,9 +416,16 @@ class RAGSystem:
         for i, (doc, meta) in enumerate(results, 1):
             source = meta.get("source", "Desconocido")
             page = meta.get("page")
+            section_type = meta.get("section_type")
+            section_title = meta.get("section_title")
+            
             context += f"[{i}] (Fuente: {source}"
             if page:
                 context += f" | Página: {page}"
+            if section_type:
+                context += f" | Sección: {section_type}"
+                if section_title:
+                    context += f" ({section_title})"
             context += f")\n{doc}\n\n"
             
             # Registrar que hemos visto esta página
@@ -625,3 +661,260 @@ class RAGSystem:
                 return key
 
         return None
+
+    def retrieve_by_section(self, section_type, pdf_name=None, k=None):
+        """
+        Recupera todos los chunks de una sección específica.
+        
+        Args:
+            section_type: Tipo de sección ('abstract', 'introduction', 'methods', etc.)
+            pdf_name: Filtrar por PDF específico (opcional)
+            k: Máximo de chunks a retornar (None = todos)
+        
+        Returns:
+            Lista de tuplas (chunk_text, metadata_dict)
+        """
+        # Determinar la colección a usar
+        if pdf_name:
+            pdf_key = self._find_pdf_key(pdf_name)
+            if not pdf_key or pdf_key not in self.collections:
+                return []
+            collection = self.collections[pdf_key]
+        else:
+            collection = self.collection
+        
+        try:
+            # Obtener todos los documentos
+            results = collection.get(
+                include=["documents", "metadatas"]
+            )
+            
+            if not results or not results["documents"]:
+                return []
+            
+            # Filtrar por section_type
+            filtered_results = []
+            for doc, meta in zip(results["documents"], results.get("metadatas", [])):
+                if meta.get("section_type") == section_type:
+                    filtered_results.append((doc, meta))
+            
+            # Limitar si k se especifica
+            if k:
+                filtered_results = filtered_results[:k]
+            
+            return filtered_results
+        except Exception as e:
+            print(f"❌ Error al recuperar sección: {e}")
+            return []
+    
+    def get_section_content(self, section_type, pdf_name=None):
+        """
+        Obtiene todo el contenido de una sección como un texto continuo.
+        
+        Args:
+            section_type: Tipo de sección ('abstract', 'introduction', etc.)
+            pdf_name: Filtrar por PDF específico (opcional)
+        
+        Returns:
+            str con el contenido completo de la sección
+        """
+        chunks = self.retrieve_by_section(section_type, pdf_name)
+        
+        if not chunks:
+            return f"No se encontró contenido para la sección: {section_type}"
+        
+        # Concatenar todos los chunks de la sección
+        content = "\n\n".join([chunk[0] for chunk in chunks])
+        
+        # Agregar metadatos
+        meta = chunks[0][1] if chunks else {}
+        section_title = meta.get("section_title", section_type.upper())
+        
+        return f"**{section_title}**\n\n{content}"
+
+    def identify_pdf_sections(self, pdf_path: str) -> Dict[str, Dict]:
+        """
+        Identifica y extrae SOLO las secciones de un PDF, sin indexarlas.
+        Útil para ver la estructura del documento antes de procesarlo.
+        
+        Args:
+            pdf_path: Ruta al archivo PDF
+        
+        Returns:
+            Dict con las secciones encontradas y su contenido
+            {
+                'abstract': {'title': 'Abstract', 'content': '...', 'words': 150, 'pages': (1,1)},
+                'introduction': {'title': 'Introduction', 'content': '...', 'words': 500, 'pages': (2,3)},
+                ...
+            }
+        """
+        try:
+            # Extraer texto del PDF
+            pages_data = self.extract_text_from_pdf(pdf_path)
+        except Exception as e:
+            print(f"❌ Error al procesar PDF {pdf_path}: {e}")
+            raise
+        
+        # Fusionar texto de páginas
+        full_text = "\n\n".join([page["text"] for page in pages_data])
+        
+        # Usar extractor de secciones
+        print(f"📑 Identificando secciones del PDF...")
+        section_extractor = SectionExtractor()
+        sections = section_extractor.extract_sections(full_text, pages_data)
+        
+        # Formatear resultado
+        result = {}
+        for section_type, section_data in sections.items():
+            result[section_type] = {
+                'title': section_data.get('title', section_type.upper()),
+                'content': section_data.get('content', ''),
+                'word_count': section_data.get('word_count', 0),
+                'pages': f"{section_data.get('start_page', 1)}-{section_data.get('end_page', 1)}",
+                'chunk_count': section_data.get('chunk_count', 0)
+            }
+        
+        return result
+
+    def print_pdf_structure(self, pdf_path: str):
+        """
+        Muestra la estructura de secciones de un PDF de forma legible.
+        
+        Args:
+            pdf_path: Ruta al archivo PDF
+        """
+        try:
+            sections = self.identify_pdf_sections(pdf_path)
+            
+            print(f"\n{'='*60}")
+            print(f"📄 ESTRUCTURA DEL PDF: {os.path.basename(pdf_path)}")
+            print(f"{'='*60}")
+            
+            if not sections:
+                print("⚠️  No se detectaron secciones")
+                return
+            
+            for i, (section_type, info) in enumerate(sections.items(), 1):
+                print(f"\n{i}. 📌 {section_type.upper()}")
+                print(f"   Título: {info['title']}")
+                print(f"   Páginas: {info['pages']}")
+                print(f"   Palabras: {info['word_count']}")
+                print(f"   Chunks: {info['chunk_count']}")
+                print(f"   Preview: {info['content'][:150]}..." if len(info['content']) > 150 else f"   Content: {info['content']}")
+            
+            print(f"\n{'='*60}\n")
+        except Exception as e:
+            print(f"❌ Error: {e}")
+
+    def extract_pdf_sections(self, pdf_path):
+        """
+        Extrae secciones estructuradas de un PDF (Title, Abstract, Introduction, etc.)
+        de forma independiente al RAG.
+        Returns: Dict con las secciones encontradas
+        """
+        import re
+        
+        if not os.path.exists(pdf_path):
+            raise FileNotFoundError(f"El archivo PDF no existe: {pdf_path}")
+        
+        sections = {}
+        doc = None
+        
+        try:
+            doc = pymupdf.open(pdf_path)
+            full_text = ""
+            
+            # Extraer todo el texto preservando saltos de línea
+            for page_num, page in enumerate(doc):
+                try:
+                    text = page.get_text()
+                    full_text += text + "\n"
+                except:
+                    continue
+            
+            print(f"[EXTRACT] 📄 PDF abierto, {len(full_text)} caracteres extraídos")
+            
+            # Palabras clave para cada sección
+            section_keywords = {
+                "abstract": ["abstract", "resumen", "summary", "sumario"],
+                "introduction": ["introduction", "introducción", "introduccion"],
+                "methods": ["methods", "methodology", "metodología", "metodologia", "métodos", "metodos"],
+                "results": ["results", "resultados", "findings", "hallazgos"],
+                "discussion": ["discussion", "discusión", "discusion"],
+                "conclusion": ["conclusion", "conclusión", "conclusiones", "conclusions"],
+                "references": ["references", "referencias", "bibliography", "bibliografía"],
+                "title": ["title", "título", "titulo"]
+            }
+            
+            # Crear un patrón que capture cada sección
+            # Patrón: encabezado seguido de TODO hasta el siguiente encabezado
+            
+            for section_name, keywords in section_keywords.items():
+                # Crear alternativa de palabras clave: (word1|word2|word3)
+                keywords_pattern = '|'.join(re.escape(kw) for kw in keywords)
+                
+                # Patrón: línea que contiene una palabra clave, luego TODO hasta la siguiente sección
+                # Usamos (?i) para case-insensitive
+                # (?:^|\n) = inicio de línea
+                # \s* = espacios opcionales
+                # (keywords_pattern) = una de las palabras clave
+                # [\s\S]*? = contenido (lazy match)
+                # (?=\n\s*(?:abstract|introduction|methods|results|discussion|conclusion|references|1\s+Introduction)) = lookahead para siguiente sección
+                
+                # Primero, buscar línea que contenga la palabra clave
+                keyword_line_pattern = rf'(?:^|\n)\s*({keywords_pattern})\s*\n'
+                match = re.search(keyword_line_pattern, full_text, re.IGNORECASE | re.MULTILINE)
+                
+                if match:
+                    # El contenido empieza DESPUÉS del encabezado y su salto de línea
+                    section_start = match.end()
+                    
+                    # Buscar el siguiente encabezado de forma más robusta
+                    # Buscar una línea que empiece con una palabra clave de otra sección
+                    all_keywords = []
+                    for other_section, other_keywords in section_keywords.items():
+                        if other_section != section_name:
+                            all_keywords.extend(other_keywords)
+                    
+                    next_section_pattern = rf'\n\s*({"|".join(re.escape(kw) for kw in all_keywords)})\s*\n'
+                    next_match = re.search(next_section_pattern, full_text[section_start:], re.IGNORECASE | re.MULTILINE)
+                    
+                    if next_match:
+                        # Hay otra sección después
+                        section_end = section_start + next_match.start()
+                    else:
+                        # Esta es la última sección
+                        section_end = len(full_text)
+                    
+                    # Extraer el contenido
+                    section_content = full_text[section_start:section_end].strip()
+                    
+                    if section_content:
+                        sections[section_name] = section_content
+                        print(f"✅ {section_name}: {len(section_content)} caracteres")
+                        if len(section_content) < 200:
+                            print(f"   Content: {section_content}")
+                        else:
+                            print(f"   Preview: {section_content[:150]}...")
+                    else:
+                        sections[section_name] = "[Sección vacía]"
+                        print(f"⚠️ {section_name}: vacía")
+            
+            if not sections:
+                print("⚠️ No se encontraron secciones")
+                sections["full_text"] = full_text
+            
+            print(f"[EXTRACT] ✅ {len(sections)} secciones extraídas")
+            return sections
+            
+        except Exception as e:
+            print(f"❌ [EXTRACT] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+        finally:
+            if doc:
+                try:
+                    doc.close()
+                except:
+                    pass

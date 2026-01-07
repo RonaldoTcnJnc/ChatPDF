@@ -2,7 +2,7 @@ from rag_system import RAGSystem
 import os
 import json
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from dotenv import load_dotenv
 from web_search import WebSearcher
 from openai import OpenAI
@@ -187,10 +187,33 @@ class ChatbotRAG:
         """Elimina un PDF completamente."""
         return self.rag.delete_pdf(pdf_name)
     
+    def identify_pdf_sections(self, pdf_path):
+        """
+        Identifica las secciones de un PDF SIN indexarlas.
+        Útil para ver la estructura antes de procesarlo.
+        
+        Args:
+            pdf_path: Ruta al PDF
+            
+        Returns:
+            Dict con secciones identificadas
+        """
+        return self.rag.identify_pdf_sections(pdf_path)
+    
+    def show_pdf_structure(self, pdf_path):
+        """
+        Muestra de forma legible la estructura de secciones de un PDF.
+        
+        Args:
+            pdf_path: Ruta al PDF
+        """
+        self.rag.print_pdf_structure(pdf_path)
+    
     def get_response(self, user_message, use_rag=True, k=None, pdf_name=None):
         """
         Obtiene una respuesta del modelo con o sin RAG.
         Usa el proveedor configurado (Gemini o local).
+        Ahora detecta automáticamente búsquedas de secciones (abstract, introducción, etc.)
         """
         # Determinar k dinámicamente si no se especifica
         if k is None:
@@ -202,42 +225,57 @@ class ChatbotRAG:
         # Obtener contexto (RAG o Web)
         context = ""
         
-        # Detectar búsqueda web explícita
-        search_triggers = [
-            "buscar", "investigar", "search", "web", "encuentra", "find", 
-            "indaga", "rastrea", "consigue", "busca", "analiza", 
-            "papers", "artículos", "articles", "quiero saber", "dame info",
-            "recomienda", "recomendar", "sugiere", "tienes", "conoces", "otros paper"
-        ]
-        
-        trigger_used = next((t for t in search_triggers if t in user_message.lower()), None)
-        
-        if trigger_used:
-            print(f"🌍 Modo Web activado por keyword: '{trigger_used}'")
-            
-            idx = user_message.lower().find(trigger_used)
-            clean_query = user_message[idx + len(trigger_used):].strip() if idx != -1 else user_message
-            
-            if len(clean_query) < 3:
-                clean_query = user_message
-            for prep in ["sobre", "about", "de", "for", "en", "in", "que hablen", "mas", "del", "tema"]:
-                if clean_query.lower().startswith(prep + " "):
-                    clean_query = clean_query[len(prep):].strip()
-                    break
-            
-            if len(clean_query) < 3:
-                clean_query = user_message
-            
-            results = self.searcher.unified_search(clean_query)
-            context = self._format_search_results(results)
-            if not context:
-                context = "No se encontraron resultados en la web."
-                
-        elif use_rag:
-            if pdf_name:
-                context = self.rag.get_context_by_pdf(user_message, pdf_name, k=k)
+        # ✅ NUEVO: Detectar búsqueda de sección específica PRIMERO
+        section_request = self._detect_section_request(user_message)
+        if section_request and use_rag:
+            section_type, section_keywords = section_request
+            print(f"📑 Sección detectada: '{section_type}' (keywords: {section_keywords})")
+            context = self.rag.get_section_content(section_type, pdf_name)
+            if context and not context.startswith("No se encontró"):
+                print(f"✅ Contenido de sección '{section_type}' recuperado ({len(context)} caracteres)")
             else:
-                context = self.rag.get_context(user_message, k=k)
+                # Fallback a búsqueda normal si no se encuentra la sección
+                print(f"⚠️ No se encontró sección '{section_type}', usando búsqueda RAG normal...")
+                context = ""
+        
+        # Si no se detectó sección o falló, proceder con búsqueda normal
+        if not context or context.startswith("No se encontró"):
+            # Detectar búsqueda web explícita
+            search_triggers = [
+                "buscar", "investigar", "search", "web", "encuentra", "find", 
+                "indaga", "rastrea", "consigue", "busca", "analiza", 
+                "papers", "artículos", "articles", "quiero saber", "dame info",
+                "recomienda", "recomendar", "sugiere", "tienes", "conoces", "otros paper"
+            ]
+            
+            trigger_used = next((t for t in search_triggers if t in user_message.lower()), None)
+            
+            if trigger_used:
+                print(f"🌍 Modo Web activado por keyword: '{trigger_used}'")
+                
+                idx = user_message.lower().find(trigger_used)
+                clean_query = user_message[idx + len(trigger_used):].strip() if idx != -1 else user_message
+                
+                if len(clean_query) < 3:
+                    clean_query = user_message
+                for prep in ["sobre", "about", "de", "for", "en", "in", "que hablen", "mas", "del", "tema"]:
+                    if clean_query.lower().startswith(prep + " "):
+                        clean_query = clean_query[len(prep):].strip()
+                        break
+                
+                if len(clean_query) < 3:
+                    clean_query = user_message
+                
+                results = self.searcher.unified_search(clean_query)
+                context = self._format_search_results(results)
+                if not context:
+                    context = "No se encontraron resultados en la web."
+                    
+            elif use_rag:
+                if pdf_name:
+                    context = self.rag.get_context_by_pdf(user_message, pdf_name, k=k)
+                else:
+                    context = self.rag.get_context(user_message, k=k)
 
         # Truncar contexto si excede la capacidad del modelo
         if context and "No hay información" not in context:
@@ -278,26 +316,71 @@ INSTRUCCIONES:
         return bot_message
     
     def _get_gemini_response(self, user_message: str, system_message: Optional[str]) -> str:
-        """Obtiene respuesta de Gemini API."""
-        try:
-            if system_message:
-                full_prompt = f"{system_message}\n\nPREGUNTA: {user_message}"
-            else:
-                full_prompt = user_message
-            
-            # Nueva API de google.genai
-            response = self.gemini_client.models.generate_content(
-                model=self.gemini_model,
-                contents=full_prompt
-            )
-            return response.text
-            
-        except Exception as e:
-            error_msg = str(e)
-            print(f"❌ Error detallado de Gemini: {error_msg}")
-            if "429" in error_msg or "ResourceExhausted" in error_msg or "quota" in error_msg.lower():
-                return "⚠️ Error: Se ha excedido la cuota gratuita de Gemini API. Por favor, espera unos minutos o cambia al modelo Local."
-            return f"❌ Error al obtener respuesta de Gemini: {e}"
+        """
+        Obtiene respuesta de Gemini API con manejo robusto de errores.
+        Implementa reintentos para errores 503 y fallback a modelo local.
+        """
+        import time
+        max_retries = 3
+        retry_delay = 2  # segundos
+        
+        for attempt in range(max_retries):
+            try:
+                if system_message:
+                    full_prompt = f"{system_message}\n\nPREGUNTA: {user_message}"
+                else:
+                    full_prompt = user_message
+                
+                # Nueva API de google.genai
+                response = self.gemini_client.models.generate_content(
+                    model=self.gemini_model,
+                    contents=full_prompt
+                )
+                return response.text
+                
+            except Exception as e:
+                error_msg = str(e)
+                error_lower = error_msg.lower()
+                
+                # ❌ Error 503 - Servidor sobrecargado
+                if "503" in error_msg or "overloaded" in error_lower or "unavailable" in error_lower:
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delay * (attempt + 1)
+                        print(f"⚠️  Gemini API sobrecargada (intento {attempt + 1}/{max_retries})")
+                        print(f"   Reintentando en {wait_time} segundos...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        # Fallback a modelo local después de reintentos
+                        print(f"⚠️  Gemini no disponible después de {max_retries} intentos")
+                        print(f"   Cambiando a modelo local...")
+                        try:
+                            return self._get_local_response(user_message, system_message)
+                        except Exception as local_error:
+                            return f"⚠️ Error: Gemini API no disponible y modelo local tampoco responde. Por favor intenta más tarde.\n\nDetalles: {str(local_error)[:100]}"
+                
+                # ❌ Error 429 - Cuota excedida
+                elif "429" in error_msg or "quota" in error_lower or "resourceexhausted" in error_lower:
+                    return "⚠️ Error: Se ha excedido la cuota gratuita de Gemini API. Por favor:\n1. Espera 1 hora\n2. O cambia a modelo local (en configuración)\n3. O configura tu API key de pago"
+                
+                # ❌ Error 401 - No autorizado
+                elif "401" in error_msg or "unauthenticated" in error_lower or "invalid.*api" in error_lower:
+                    return "❌ Error de autenticación: API key de Gemini inválida o no configurada. Verifica tu .env o config.json"
+                
+                # ❌ Otros errores
+                else:
+                    print(f"❌ Error de Gemini (intento {attempt + 1}/{max_retries}): {error_msg[:100]}")
+                    if attempt == max_retries - 1:
+                        # Último intento falló, usar local
+                        try:
+                            print(f"   Fallback a modelo local...")
+                            return self._get_local_response(user_message, system_message)
+                        except:
+                            return f"❌ Error: No se pudo conectar con Gemini ni con el modelo local. Por favor verifica:\n1. Conexión a internet\n2. API key de Gemini\n3. Servidor LMStudio si usas modelo local"
+                    time.sleep(retry_delay)
+                    continue
+        
+        return "❌ Error: No se pudo obtener respuesta de Gemini"
     
     def _get_local_response(self, user_message: str, system_message: Optional[str]) -> str:
         """Obtiene respuesta del modelo local (LMStudio)."""
@@ -361,6 +444,59 @@ INSTRUCCIONES:
             formatted += f"    RESUMEN: {item['summary'][:300]}...\n\n"
         
         return formatted
+    
+    def _detect_section_request(self, user_message: str) -> Optional[Tuple[str, List[str]]]:
+        """
+        Detecta si el usuario está pidiendo una sección específica (Abstract, Introducción, etc.)
+        
+        Returns:
+            Tupla (section_type, matched_keywords) o None si no detecta sección
+        
+        Examples:
+            "Show me the abstract" -> ("abstract", ["abstract"])
+            "Cuál es la introducción?" -> ("introduction", ["introducción"])
+            "Dame los métodos" -> ("methods", ["métodos"])
+        """
+        message_lower = user_message.lower()
+        
+        # Mapeo de secciones con sus keywords
+        section_keywords = {
+            "abstract": ["abstract", "resumen", "summary", "sumario", "resúmen"],
+            "introduction": ["introducción", "introduccion", "introduction", "intro", "antecedentes", "introducting"],
+            "methods": ["métodos", "metodos", "methodology", "metodología", "metodologia", "método", "method", "methods"],
+            "results": ["resultados", "results", "findings", "hallazgos", "resultado"],
+            "discussion": ["discusión", "discusion", "discussion", "análisis", "analisis"],
+            "conclusion": ["conclusión", "conclusion", "conclusiones", "conclusions", "conclusão"],
+            "references": ["referencias", "references", "bibliografía", "bibliografia", "bibliography"],
+            "title": ["título", "titulo", "title"],
+            "appendix": ["apéndice", "appendix", "anexo", "anexos", "supplement"]
+        }
+        
+        # Frases de búsqueda que indican que se busca una sección
+        section_triggers = [
+            "muestra", "show", "cuál", "cual", "que es", "what is", "what's", "dame", "give me",
+            "obtén", "get", "decirme", "tell me", "sección", "section", "capítulo",
+            "chapter", "parte", "part", "contenido", "content", "enseña", "show me"
+        ]
+        
+        # Verificar si hay un trigger de búsqueda de sección
+        has_trigger = any(trigger in message_lower for trigger in section_triggers)
+        
+        if not has_trigger:
+            return None
+        
+        # Buscar keywords de secciones en el mensaje
+        for section_type, keywords in section_keywords.items():
+            matched_keywords = []
+            for keyword in keywords:
+                if keyword in message_lower:
+                    matched_keywords.append(keyword)
+            
+            if matched_keywords:
+                return (section_type, matched_keywords)
+        
+        return None
+
     
     def generate_mindmap(self, pdf_path):
         """Genera un mapa conceptual (JSON de nodos y aristas) a partir de los chunks RAG."""

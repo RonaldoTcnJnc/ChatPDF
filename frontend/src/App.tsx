@@ -24,6 +24,7 @@ function App() {
   // Layout State (Collapsible Panels)
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(true);
+  const [chatWidth, setChatWidth] = useState(400);
 
   useEffect(() => {
     fetchSystemStatus();
@@ -146,6 +147,8 @@ function App() {
               isOpen={isChatOpen}
               onToggle={() => setIsChatOpen(!isChatOpen)}
               viewMode={viewMode}
+              chatWidth={chatWidth}
+              onChatWidthChange={setChatWidth}
             >
               <ChatInterface selectedFile={selectedFile} useRAG={true} />
             </CollapsibleChatPane>
@@ -210,18 +213,58 @@ function CollapsibleSidebar({ children, isOpen, onToggle }: { children: React.Re
 }
 
 // Collapsible Chat Pane Wrapper
-function CollapsibleChatPane({ children, isOpen, onToggle, viewMode }: { children: React.ReactNode, isOpen: boolean, onToggle: () => void, viewMode: string }) {
-  const width = !isOpen ? '0px' : '400px';
+function CollapsibleChatPane({ children, isOpen, onToggle, viewMode, chatWidth, onChatWidthChange }: { children: React.ReactNode, isOpen: boolean, onToggle: () => void, viewMode: string, chatWidth: number, onChatWidthChange: (width: number) => void }) {
+  const [isResizing, setIsResizing] = useState(false);
+
+  const handleMouseMove = (e: MouseEvent) => {
+    if (!isResizing) return;
+    const newWidth = Math.max(300, Math.min(700, window.innerWidth - e.clientX));
+    onChatWidthChange(newWidth);
+  };
+
+  const handleMouseUp = () => {
+    setIsResizing(false);
+  };
+
+  useEffect(() => {
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isResizing]);
+
+  const width = !isOpen ? '0px' : `${chatWidth}px`;
   const display = !isOpen ? 'none' : 'flex';
 
   return (
     <div style={{ position: 'relative', height: '100%', display: 'flex', minWidth: 0 }}>
+      {/* Resize Handle */}
+      {isOpen && (
+        <div
+          onMouseDown={() => setIsResizing(true)}
+          style={{
+            width: '4px',
+            height: '100%',
+            background: isResizing ? 'rgba(99, 102, 241, 0.5)' : 'transparent',
+            cursor: 'ew-resize',
+            transition: 'background 0.2s',
+            userSelect: 'none'
+          }}
+          onMouseEnter={(e) => !isResizing && (e.currentTarget.style.background = 'rgba(99, 102, 241, 0.3)')}
+          onMouseLeave={(e) => !isResizing && (e.currentTarget.style.background = 'transparent')}
+        />
+      )}
+
       <button
         onClick={onToggle}
         style={{
           position: 'absolute',
           top: '50%',
-          left: '-12px',
+          left: isOpen ? `${chatWidth + 4 - 12}px` : '-12px',
           zIndex: 20,
           width: '24px',
           height: '24px',
@@ -233,7 +276,8 @@ function CollapsibleChatPane({ children, isOpen, onToggle, viewMode }: { childre
           alignItems: 'center',
           justifyContent: 'center',
           cursor: 'pointer',
-          transform: 'translateY(-50%)'
+          transform: 'translateY(-50%)',
+          transition: 'left 0.3s ease'
         }}
         title={isOpen ? "Ocultar chat" : "Mostrar chat"}
       >
@@ -243,7 +287,7 @@ function CollapsibleChatPane({ children, isOpen, onToggle, viewMode }: { childre
       <div style={{
         width: width,
         minWidth: isOpen ? '300px' : '0',
-        maxWidth: '500px',
+        maxWidth: '700px',
         height: '100%',
         transition: 'width 0.3s ease',
         borderLeft: isOpen ? '1px solid var(--border-color)' : 'none',
