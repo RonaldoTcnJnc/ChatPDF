@@ -2,38 +2,28 @@
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-*.egg-info/
-dist/
-build/
-eggs/
-*.egg
-
-# Virtual environments
 venv/
-env/
-.venv/
-.env/
+.env
+.pytest_cache/
 
-# ChromaDB database (generated data)
-chroma_db/
+# Node.js / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.env
+frontend/.env.local
 
-# PDF files (user data)
-pdfs/*.pdf
+# Database & Local Storage
+backend/chroma_db/
+backend/pdfs/
+backend/static/
+*.db
+*.sqlite3
 
-# IDE
+# IDEs
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# OS files
+# OS
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
-
-# Environment variables
-.env

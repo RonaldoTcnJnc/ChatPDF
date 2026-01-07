@@ -300,21 +300,6 @@ export default function ChatInterface({ selectedFile, useRAG }: ChatInterfacePro
                 <div ref={messagesEndRef} />
             </div>
 
-            <div className="quick-actions">
-                <button onClick={() => setInput("Explícame esto como si tuviera 5 años")} className="action-chip">
-                    👶 Explicar simple
-                </button>
-                <button onClick={() => setInput("Dame un resumen de los puntos clave")} className="action-chip">
-                    📝 Resumir
-                </button>
-                <button onClick={() => setInput("Crea un esquema markdown de los conceptos principales")} className="action-chip">
-                    📊 Esquema
-                </button>
-                <button onClick={() => setInput("Translate this document to English")} className="action-chip">
-                    🇺🇸 English
-                </button>
-            </div>
-
             <div className="input-container">
                 <textarea
                     ref={textareaRef}

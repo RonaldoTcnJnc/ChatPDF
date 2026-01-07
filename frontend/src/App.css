@@ -405,8 +405,11 @@ body {
 .main-content {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  /* Changed to row to support split view */
   overflow: hidden;
+  position: relative;
+  background: var(--bg-primary);
 }
 
 /* Chat Interface */

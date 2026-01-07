@@ -428,6 +428,83 @@ class RAGSystem:
         
         return context
 
+    def get_all_chunks_for_pdf(self, pdf_name, max_chunks=50):
+        """
+        Recupera TODOS los chunks indexados de un PDF específico.
+        Útil para generar mapas conceptuales basados en el contenido procesado por RAG.
+        Returns: Lista de strings (texto de cada chunk)
+        """
+        key = self._find_pdf_key(pdf_name)
+        if not key:
+            print(f"⚠️ PDF '{pdf_name}' no encontrado en colecciones")
+            return []
+
+        pdf_collection = self.collections[key]
+        
+        try:
+            # Get all documents from the collection (no query, just retrieve)
+            results = pdf_collection.get(
+                limit=max_chunks,
+                include=["documents", "metadatas"]
+            )
+            
+            if not results or not results["documents"]:
+                return []
+            
+            return results["documents"]
+        except Exception as e:
+            print(f"❌ Error obteniendo chunks del PDF: {e}")
+            return []
+
+    def delete_pdf(self, pdf_name: str) -> bool:
+        """
+        Elimina un PDF del sistema: borra su colección y el archivo físico.
+        """
+        try:
+            print(f"🗑️ Intentando eliminar PDF: {pdf_name}")
+            
+            # 1. Encontrar la key interna (nombre de archivo real)
+            pdf_key = self._find_pdf_key(pdf_name)
+            
+            # Si no se encuentra por key, intentar usar el nombre tal cual
+            target_filename = pdf_key if pdf_key else pdf_name
+            
+            # 2. Eliminar del sistema de archivos
+            file_path = Path("./pdfs") / target_filename
+            if file_path.exists():
+                try:
+                    os.remove(file_path)
+                    print(f"✅ Archivo físico eliminado: {file_path}")
+                except Exception as e:
+                    print(f"⚠️ Error al eliminar archivo físico {file_path}: {e}")
+                    # No retornamos False aquí, intentamos borrar la colección de todos modos
+            else:
+                print(f"⚠️ Archivo físico no encontrado en: {file_path}")
+
+            # 3. Eliminar colección de ChromaDB
+            # Intentamos obtener el nombre de la colección
+            collection_name = self._get_collection_name(target_filename)
+            try:
+                self.chroma_client.delete_collection(collection_name)
+                print(f"✅ Colección eliminada: {collection_name}")
+            except ValueError:
+                print(f"⚠️ Colección {collection_name} no existía en ChromaDB")
+            except Exception as e:
+                print(f"⚠️ Error al eliminar colección {collection_name}: {e}")
+
+            # 4. Actualizar estado interno
+            if target_filename in self.collections:
+                del self.collections[target_filename]
+            
+            # Si llegamos aquí, asumimos éxito (aunque el archivo no existiera, el objetivo es que ya no esté)
+            return True
+
+        except Exception as e:
+            print(f"❌ Error crítico en delete_pdf: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     def _find_pdf_key(self, pdf_name):
         """Intenta localizar la clave de `self.collections` que corresponde al `pdf_name`.
 

@@ -13,6 +13,7 @@ export interface ChatRequest {
 
 export interface ChatResponse {
     response: string;
+    sources?: Record<string, any>[];
     sender: string;
 }
 

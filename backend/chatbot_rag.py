@@ -182,8 +182,6 @@ class ChatbotRAG:
         self.rag.add_pdf(pdf_path)
         return True
     
-        return True
-    
     def delete_pdf(self, pdf_name):
         """Elimina un PDF completamente."""
         return self.rag.delete_pdf(pdf_name)
@@ -339,6 +337,8 @@ INSTRUCCIONES:
                 max_tokens=2500
             )
             
+            if not response.choices:
+                return "❌ Error: El modelo local devolvió una respuesta vacía."
             return response.choices[0].message.content
             
         except Exception as e:
@@ -376,6 +376,117 @@ INSTRUCCIONES:
         
         return formatted
     
+    def generate_mindmap(self, pdf_path):
+        """
+        Genera un mapa conceptual (JSON de nodos y aristas) a partir de los chunks procesados por RAG.
+        """
+        import json
+        import re
+        import os
+
+        pdf_name = os.path.basename(pdf_path)
+        print(f"🧠 Generando mapa conceptual para: {pdf_name} (usando chunks RAG)")
+        
+        # 1. Obtener chunks del sistema RAG (ya procesados e indexados)
+        # Ajustar cantidad de chunks según el proveedor para evitar overflow de contexto
+        max_chunks = 30 if self.provider == "gemini" else 10
+        chunks = self.rag.get_all_chunks_for_pdf(pdf_name, max_chunks=max_chunks)
+        
+        if not chunks:
+            print(f"⚠️ No se encontraron chunks RAG para {pdf_name}, usando extracción directa como fallback")
+            full_text = self.rag.extract_text_from_pdf(pdf_path)
+            if not full_text:
+                raise ValueError("No se pudo extraer texto del PDF")
+            # Limitar caracteres también
+            char_limit = 25000 if self.provider == "gemini" else 6000
+            text_context = full_text[:char_limit]
+        else:
+            # Unir chunks en un solo texto
+            text_context = "\n\n---\n\n".join(chunks) 
+            
+            # Recorte de seguridad adicional para local
+            if self.provider != "gemini" and len(text_context) > 10000:
+                print(f"⚠️ Recortando contexto para modelo local ({len(text_context)} -> 10000 chars)")
+                text_context = text_context[:10000] 
+        
+        prompt = f"""
+        Analiza el siguiente texto de un documento académico/técnico y genera un MAPA CONCEPTUAL.
+        
+        TEXTO:
+        {text_context}
+        
+        INSTRUCCIONES:
+        1. Identifica los conceptos más importantes (Nodos).
+        2. Identifica las relaciones entre ellos (Aristas/Conexiones).
+        3. IMPORTANTE: EL CONTENIDO DEBE ESTAR EN ESPAÑOL. Traduce los términos si es necesario.
+        4. Devuelve SALIDA EXCLUSIVAMENTE EN FORMATO JSON con la siguiente estructura:
+        {{
+            "nodes": [
+                {{ "id": "1", "label": "Concepto Principal", "type": "main" }},
+                {{ "id": "2", "label": "Subconcepto A", "type": "sub" }}
+            ],
+            "edges": [
+                {{ "source": "1", "target": "2", "label": "se compone de" }}
+            ]
+        }}
+        
+        IMPORTANTE:
+        - El JSON debe ser válido.
+        - No añadas texto antes ni después del JSON. NO markdown codes (```json).
+        - GENERA TODO EN ESPAÑOL.
+        """
+        
+        # Usar el proveedor configurado
+        if self.provider == "gemini":
+            response_text = self._get_gemini_response(prompt, system_message="Eres un experto en síntesis y visualización de conocimiento. Devuelve solo JSON.")
+        else:
+            # Para local (LMStudio), usamos una llamada directa sin historial para evitar contaminación de contexto
+            # y forzamos un system prompt más estricto
+            try:
+                print("🧠 Solicitando mapa conceptual a modelo local...")
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": "Eres un asistente experto que SOLO habla JSON. Tu tarea es extraer entidades y relaciones de textos. NO respondas con texto, SOLO JSON válido."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.3, # Menor temperatura para mayor determinismo en JSON
+                    max_tokens=3000
+                )
+                if not response.choices:
+                    raise ValueError("El modelo local devolvió una respuesta vacía (sin opciones).")
+                response_text = response.choices[0].message.content
+            except Exception as e:
+                print(f"❌ Error al generar mapa local: {e}")
+                raise ValueError(f"Error al conectar con modelo local: {e}")
+            
+        # Limpiar respuesta (robustez para modelos locales que hablan mucho)
+        clean_json = response_text
+        # Eliminar bloques de código markdown
+        if "```json" in clean_json:
+            clean_json = clean_json.split("```json")[1].split("```")[0]
+        elif "```" in clean_json:
+            clean_json = clean_json.split("```json")[1].split("```")[0]
+            
+        clean_json = clean_json.strip()
+        
+        # Intentar encontrar el JSON si hay texto alrededor
+        try:
+            start = clean_json.find('{')
+            end = clean_json.rfind('}') + 1
+            if start != -1 and end != -1:
+                clean_json = clean_json[start:end]
+                
+            data = json.loads(clean_json)
+            return data
+        except json.JSONDecodeError as e:
+            print(f"❌ Error al decodificar JSON del LLM: {clean_json[:100]}... Error: {e}")
+            # Retorno de fallback si falla gravemente
+            return {
+                "nodes": [{"id": "error", "label": "Error al generar mapa", "type": "main"}],
+                "edges": []
+            }
+
     def interactive_chat(self, folder_path=None):
         """Inicia un chat interactivo."""
         if folder_path:

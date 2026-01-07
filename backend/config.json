@@ -1,0 +1,25 @@
+{
+  "provider": "gemini",
+  "gemini": {
+    "api_key": "",
+    "model_name": "gemini-2.5-flash"
+  },
+  "lmstudio": {
+    "base_url": "http://localhost:1234/v1",
+    "api_key": "not-needed",
+    "model_name": "lmstudio-community/Meta-Llama-3-8B-Instruct",
+    "model_context_size": 8192
+  },
+  "rag": {
+    "db_path": "./chroma_db",
+    "embeddings_model": "all-MiniLM-L6-v2",
+    "pdf_folder": "./pdfs",
+    "chunk_size": 500,
+    "chunk_overlap": 100,
+    "retrieval_k": 3
+  },
+  "generation": {
+    "temperature": 0.7,
+    "max_tokens": 1000
+  }
+}
