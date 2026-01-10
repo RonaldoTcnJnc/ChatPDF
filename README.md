@@ -7,6 +7,14 @@ Un sistema RAG (Retrieval-Augmented Generation) local que mejora tu chatbot Llam
 ```bash
 pip install -r requirements.txt
 ```
+# Artículo Académico
+
+Sistema ChatBot RAG con Voz para Procesamiento
+Inteligente de Documentos Científico
+
+[Trabajo de Optimización de Grafos](Procesamiento_Inteligente_de_Documentos_Científicos_mediante_Modelos_de_Lenguaje_y_Aprendizaje.pdf)
+
+
 
 ## 📁 Estructura del Proyecto
 
