@@ -12,7 +12,7 @@ pip install -r requirements.txt
 Sistema ChatBot RAG con Voz para Procesamiento
 Inteligente de Documentos Científico
 
-[Trabajo de Optimización de Grafos](Procesamiento_Inteligente_de_Documentos_Científicos_mediante_Modelos_de_Lenguaje_y_Aprendizaje.pdf)
+Procesamiento_Inteligente_de_Documentos_Científicos_mediante_Modelos_de_Lenguaje_y_Aprendizaje.pdf
 
 
 
